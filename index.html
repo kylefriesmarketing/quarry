@@ -1,0 +1,1224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QUARRY</title>
+<meta name="description" content="A first-person alien hunting simulator. Every world runs on one biological law. Your technology makes hunting trivial, and using it is what costs you.">
+<meta property="og:title" content="QUARRY">
+<meta property="og:description" content="A first-person alien hunting simulator. Every world runs on one biological law — and using your technology is what costs you.">
+<meta property="og:type" content="website">
+<style>
+  :root{ --amber:#e8c88a; --dim:#8a7a5e; --warn:#d97a4a; --good:#8fbf7a; }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:#05070a;
+    font-family:"Courier New",monospace;color:var(--amber)}
+  canvas{display:block}
+  #grain,#scan,#vig{position:fixed;inset:0;pointer-events:none;z-index:20}
+  #scan{background:repeating-linear-gradient(to bottom,rgba(0,0,0,0) 0px,
+        rgba(0,0,0,0) 2px,rgba(0,0,0,.16) 3px,rgba(0,0,0,0) 4px);
+        opacity:.55;mix-blend-mode:multiply}
+  #vig{box-shadow:inset 0 0 240px 60px rgba(0,0,0,.85)}
+  #grain{opacity:.09}
+  #hud{position:fixed;inset:0;pointer-events:none;z-index:25;
+       text-shadow:0 0 6px rgba(232,200,138,.35)}
+  .rd{position:absolute;font-size:11px;letter-spacing:.14em;text-transform:uppercase}
+  #senses{left:28px;bottom:28px;width:210px}
+  .ch{margin-bottom:9px}
+  .ch .lab{display:flex;justify-content:space-between;font-size:9.5px;
+           color:var(--dim);margin-bottom:3px}
+  .bar{height:3px;background:rgba(232,200,138,.13);position:relative;overflow:hidden}
+  .fill{position:absolute;left:0;top:0;bottom:0;width:0%;background:var(--amber)}
+  .fill.hot{background:var(--warn)}
+  #compass{left:50%;top:22px;transform:translateX(-50%);text-align:center;
+           font-size:10px;color:var(--dim)}
+  #windarrow{font-size:19px;color:var(--amber);display:block;margin-bottom:2px}
+  #clock{right:28px;top:24px;text-align:right}
+  #phase{font-size:15px;letter-spacing:.2em}
+  #tod{font-size:9.5px;color:var(--dim);margin-top:3px}
+  #prof{font-size:9px;color:var(--dim);margin-top:9px;letter-spacing:.1em}
+  #state{right:28px;bottom:28px;text-align:right;font-size:10px;color:var(--dim);
+         line-height:1.85}
+  #state b{color:var(--amber);font-weight:normal}
+  #awareness.alert{color:#e0c060} #awareness.spooked{color:var(--warn)}
+  #optic{left:50%;bottom:26px;transform:translateX(-50%);font-size:10px;
+         color:var(--dim);letter-spacing:.22em}
+  #optic b{color:var(--amber);font-weight:normal}
+  #retic{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+         width:15px;height:15px;z-index:24;pointer-events:none;opacity:.5}
+  #retic:before,#retic:after{content:"";position:absolute;background:var(--amber)}
+  #retic:before{left:50%;top:0;bottom:0;width:1px;transform:translateX(-50%)}
+  #retic:after{top:50%;left:0;right:0;height:1px;transform:translateY(-50%)}
+  #msg{position:fixed;left:50%;top:63%;transform:translateX(-50%);z-index:26;
+       text-align:center;font-size:13px;letter-spacing:.18em;pointer-events:none;
+       opacity:0;transition:opacity .5s;text-transform:uppercase;
+       text-shadow:0 0 12px rgba(0,0,0,.9)}
+  #msg.on{opacity:1}
+  #gate{position:fixed;inset:0;z-index:60;background:#05070a;display:flex;
+        align-items:center;justify-content:center;flex-direction:column;
+        text-align:center;padding:30px;cursor:pointer}
+  #gate h1{font-size:34px;letter-spacing:.42em;font-weight:normal;margin-bottom:6px}
+  #gate .sub{font-size:10px;color:var(--dim);letter-spacing:.3em;margin-bottom:30px}
+  #gate .law{max-width:520px;font-size:12px;line-height:2;margin-bottom:26px}
+  #gate .law i{color:var(--dim);font-style:normal}
+  #gate .keys{font-size:10.5px;color:var(--dim);line-height:2.1;max-width:440px}
+  #gate .go{margin-top:30px;font-size:11px;letter-spacing:.3em;
+            border:1px solid rgba(232,200,138,.4);padding:11px 26px}
+  #gate.hide{display:none}
+  #err{position:fixed;inset:0;z-index:70;background:#0a0506;color:#e08a6a;
+       display:none;align-items:center;justify-content:center;padding:40px;
+       font-size:12px;line-height:1.9;white-space:pre-wrap}
+  /* --- THE WOUND --- */
+  #kit{left:28px;top:24px;font-size:9px;color:var(--dim);line-height:1.95;
+       letter-spacing:.12em}
+  #kit .gone{color:#7a5348;text-decoration:line-through}
+  #kit .hurt{color:var(--warn)}
+  #kit .nem{color:#c58a5e;margin-top:7px;max-width:200px;letter-spacing:.1em}
+  #wake{position:fixed;inset:0;z-index:55;background:#070507;display:none;
+        align-items:center;justify-content:center;flex-direction:column;
+        text-align:center;padding:34px;cursor:pointer;
+        animation:wakeIn 2.6s ease-out}
+  @keyframes wakeIn{ from{opacity:0} 40%{opacity:0} to{opacity:1} }
+  #wake.on{display:flex}
+  #wake h2{font-size:23px;letter-spacing:.4em;font-weight:normal;color:#c9a578;
+           margin-bottom:5px}
+  #wake .cause{font-size:9.5px;color:var(--dim);letter-spacing:.3em;margin-bottom:34px}
+  #wake .row{max-width:540px;font-size:12px;line-height:2.05;margin-bottom:22px}
+  #wake .hd{font-size:9px;color:var(--dim);letter-spacing:.3em;margin-bottom:6px}
+  #wake .big{color:var(--warn);font-size:15px;letter-spacing:.2em}
+  #wake .took{color:#d9b98a;font-size:15px;letter-spacing:.2em}
+  #wake .note{color:var(--dim);font-size:11.5px}
+  #wake .out{max-width:520px;font-size:12.5px;line-height:2.1;color:#b9a37e;
+             border-top:1px solid rgba(232,200,138,.16);padding-top:22px;margin-top:6px}
+  #wake .go{margin-top:32px;font-size:10px;letter-spacing:.3em;color:var(--dim);
+            border:1px solid rgba(232,200,138,.3);padding:10px 24px}
+  #wk-pick{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:10px}
+  #wk-pick button{background:none;color:#d9b98a;border:1px solid rgba(232,200,138,.32);
+    font-family:inherit;font-size:10.5px;letter-spacing:.16em;padding:11px 17px;
+    cursor:pointer}
+  #wk-pick button:hover{border-color:#d9b98a;background:rgba(232,200,138,.07)}
+  /* bleeding — you can read it without a bar */
+  #blood{position:fixed;inset:0;pointer-events:none;z-index:22;opacity:0;
+         transition:opacity 1.1s;
+         box-shadow:inset 0 0 190px 44px rgba(122,20,14,.62)}
+  #blood.on{opacity:1}
+  #kit .bleed{color:#d4564a;margin-top:6px}
+  /* --- THE RECKONING (M2) --- */
+  #reck{position:fixed;inset:0;z-index:58;background:rgba(5,6,8,.96);display:none;
+        align-items:center;justify-content:center;flex-direction:column;
+        text-align:center;padding:32px;cursor:pointer}
+  #reck.on{display:flex}
+  #reck .ttl{font-size:10px;color:var(--dim);letter-spacing:.42em;margin-bottom:6px}
+  #reck .sp{font-size:19px;letter-spacing:.24em;margin-bottom:2px}
+  #reck .bandline{font-size:11px;color:var(--dim);letter-spacing:.2em;margin-bottom:26px}
+  #reck .bandline b{color:#e8c88a;font-weight:normal}
+  #reck .grade{font-size:32px;letter-spacing:.3em;color:#e8c88a;margin-bottom:4px}
+  #reck .gnote{font-size:11.5px;color:var(--dim);max-width:460px;margin-bottom:24px;
+               line-height:1.85}
+  #reck table{border-collapse:collapse;font-size:11px;margin-bottom:20px;min-width:330px}
+  #reck td{padding:5px 13px;text-align:left;color:var(--dim);letter-spacing:.1em}
+  #reck td.v{text-align:right;color:#cbb389}
+  #reck tr.tot td{border-top:1px solid rgba(232,200,138,.22);padding-top:10px;
+                  color:#e8c88a;font-size:14px}
+  #reck .cur{display:flex;gap:44px;margin-top:6px}
+  #reck .cur div{font-size:10px;color:var(--dim);letter-spacing:.24em}
+  #reck .cur b{display:block;font-size:22px;margin-top:5px;font-weight:normal}
+  #reck .honor b{color:#e8c88a} #reck .money b{color:#8fbf7a}
+  #reck .void{color:var(--warn);font-size:13px;letter-spacing:.2em;margin-bottom:12px}
+  #reck .voidwhy{color:var(--dim);font-size:11.5px;max-width:440px;line-height:1.9;
+                 margin-bottom:20px}
+  #reck .go{margin-top:30px;font-size:10px;letter-spacing:.3em;color:var(--dim);
+            border:1px solid rgba(232,200,138,.28);padding:10px 24px}
+  /* assessment readout */
+  #assess{right:28px;top:104px;text-align:right;font-size:9.5px;color:var(--dim);
+          line-height:1.9;letter-spacing:.12em}
+  #assess .band{color:#e8c88a;font-size:12px;letter-spacing:.2em}
+  #assess .grav{color:var(--warn)}
+  #ledger{left:28px;bottom:170px;font-size:9px;color:var(--dim);letter-spacing:.14em;
+          line-height:1.9}
+  #ledger b{color:#cbb389;font-weight:normal}
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <h1>QUARRY</h1>
+  <div class="sub">M1 &mdash; THE STALK</div>
+  <div class="law">
+    <i>THE LAW OF THIS WORLD</i><br><br>
+    <b>Everything here is bound to a host.</b><br><br>
+    Nothing on this rock lives alone. It has eyes, ears and a nose like anything
+    else &mdash; and it is never the only thing you have to account for.
+  </div>
+  <div class="keys">
+    W A S D move &nbsp;&middot;&nbsp; SHIFT slow &nbsp;&middot;&nbsp; CTRL crouch &nbsp;&middot;&nbsp; MOUSE look<br>
+    1 / 2 / 3 &nbsp; optics: none &middot; thermal &middot; pheromone<br>
+    F throw spear &nbsp;&middot;&nbsp; E rest &amp; skip to next phase (only when still)<br>
+    C toggle cloak (it will cost you) &nbsp;&middot;&nbsp; ESC release mouse
+  </div>
+  <div class="go">CLICK TO HUNT</div>
+</div>
+<div id="err"></div>
+
+<div id="hud">
+  <div class="rd" id="compass"><span id="windarrow">&uarr;</span><span id="windtxt">WIND</span></div>
+  <div class="rd" id="clock"><div id="phase">DAWN</div><div id="tod">04:12</div>
+    <div id="prof">QUARRY: —</div></div>
+  <div class="rd" id="senses">
+    <div class="ch"><div class="lab"><span>SIGHT</span><span id="sgtv">0</span></div>
+      <div class="bar"><div class="fill" id="sgtf"></div></div></div>
+    <div class="ch"><div class="lab"><span>SOUND</span><span id="sndv">0</span></div>
+      <div class="bar"><div class="fill" id="sndf"></div></div></div>
+    <div class="ch"><div class="lab"><span>SCENT</span><span id="scnv">0</span></div>
+      <div class="bar"><div class="fill" id="scnf"></div></div></div>
+  </div>
+  <div class="rd" id="state">
+    <div>QUARRY <b id="qdist">—</b></div>
+    <div>DOING <b id="qstate">—</b></div>
+    <div>AWARE <b id="awareness">CALM</b></div>
+    <div>VIA <b id="chan">—</b></div>
+    <div>SPEARS <b id="spears">3</b></div>
+  </div>
+  <div class="rd" id="optic">OPTIC <b id="opticname">NONE</b></div>
+  <div class="rd" id="kit"></div>
+  <div class="rd" id="assess"></div>
+  <div class="rd" id="ledger"></div>
+</div>
+
+<div id="reck">
+  <div class="ttl">THE RECKONING</div>
+  <div class="sp" id="rk-species">—</div>
+  <div class="bandline" id="rk-band">—</div>
+  <div class="void" id="rk-void" style="display:none">THE TROPHY IS VOID</div>
+  <div class="voidwhy" id="rk-voidwhy" style="display:none"></div>
+  <div class="grade" id="rk-grade">—</div>
+  <div class="gnote" id="rk-gnote">—</div>
+  <table id="rk-tbl"></table>
+  <div class="cur">
+    <div class="honor">HONOR<b id="rk-honor">0</b></div>
+    <div class="money">BOUNTY<b id="rk-bounty">0</b></div>
+  </div>
+  <div class="go">CLICK TO CONTINUE</div>
+</div>
+
+<div id="wake">
+  <h2>YOU WAKE ON THE SHIP</h2>
+  <div class="cause" id="wk-cause">NOTHING REWOUND</div>
+  <div class="row"><div class="hd">THE INJURY</div>
+    <div class="big" id="wk-inj">—</div>
+    <div class="note" id="wk-injnote">—</div></div>
+  <div class="row"><div class="hd">WHAT IT TOOK</div>
+    <div class="took" id="wk-took">—</div>
+    <div class="note" id="wk-tooknote">—</div></div>
+  <div class="out" id="wk-out">—</div>
+  <div id="wk-pick"></div>
+  <div class="go" id="wk-go">CLICK TO GO BACK DOWN</div>
+</div>
+<div id="retic"></div><div id="msg"></div><div id="blood"></div>
+<div id="grain"></div><div id="scan"></div><div id="vig"></div>
+
+<script type="importmap">
+{ "imports": { "three": "./lib/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import {createSim, makeRNG, PROFILES, WORLD_SIZE, WATER_Y, GRID,
+        INJURIES, KIT} from './sim.js';
+import {LOCOMOTION, LAWS, BIOMES} from './worldgen.js';
+import {METHOD, TIERS, bandOf} from './scoring.js';
+import {createPost} from './post.js';
+import {createSfx} from './sfx.js';
+
+const el=id=>document.getElementById(id);
+const ERR=document.getElementById('err');
+function fatal(e){ ERR.style.display='flex';
+  ERR.textContent='QUARRY failed to start.\n\n'+(e&&e.stack?e.stack:e); console.error(e); }
+window.addEventListener('error',ev=>fatal(ev.error||ev.message));
+
+try{
+/* ============================================================
+   SIM  (all logic lives in sim.js — this file is VIEW ONLY)
+   ============================================================ */
+const PROFILE_POOL=['watcher','nose','listener','balanced','ambusher'];
+const QS=new URLSearchParams(location.search);
+const SEED=parseInt(QS.get('seed')||'20260811',10);
+const PROFILE=PROFILES[QS.get('profile')] ? QS.get('profile')
+              : PROFILE_POOL[SEED%PROFILE_POOL.length];
+const sim=createSim(SEED, PROFILE);
+const W=sim.world;
+
+/* ⚠️ THE VIEW GETS ITS OWN RNG. Scenery placement used to draw from W.rng —
+   the SIM's stream — so a rendered world and a headless soak of the same seed
+   pulled different wind numbers and diverged. Seed-stable, sim-untouched. */
+const vrng=makeRNG((SEED^0x9e3779b9)>>>0);
+
+/* ============================================================
+   RENDERER
+   ============================================================ */
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(68,innerWidth/innerHeight,0.1,900);
+const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+const fog=new THREE.FogExp2(0x2a3038,0.0072); scene.fog=fog;
+/* the ground half of the hemisphere was almost black, so every vertical
+   surface — i.e. all of the cover you are supposed to read — crushed out */
+const hemi=new THREE.HemisphereLight(0x9fb4d0,0x6b5a3e,0.55); scene.add(hemi);
+const sun=new THREE.DirectionalLight(0xffd8a8,1.5); sun.position.set(40,60,20); scene.add(sun);
+const rim=new THREE.DirectionalLight(0x93b7ff,0.28); rim.position.set(-40,22,-30); scene.add(rim);
+
+/* THE MASK (M3). Grain, weave, aberration and the scanlines now live in the
+   signal instead of in three stacked DOM overlays. */
+/* The biome's ground colour multiplies the terrain's vertex albedo, so a salt
+   flat and an ash forest are visibly different rocks, not the same rock with
+   a filter. Kept near white-ish so the vertex shading still reads. */
+const BIOME_TINT=(()=>{ const c=new THREE.Color(sim.biome.ground);
+  c.lerp(new THREE.Color(0xffffff),0.45); return c.getHex(); })();
+const COVER_TINT=(()=>{ const c=new THREE.Color(sim.biome.ground);
+  c.multiplyScalar(0.62); return c.getHex(); })();
+
+const sfx=createSfx();
+const post=createPost(renderer,scene,camera);
+post.setSize(innerWidth,innerHeight);
+let postOn=post.available && QS.get('post')!=='0';
+function drawFrame(){ if(postOn) post.render(); else renderer.render(scene,camera); }
+
+/* terrain */
+const tgeo=new THREE.PlaneGeometry(WORLD_SIZE,WORLD_SIZE,GRID-1,GRID-1);
+tgeo.rotateX(-Math.PI/2);
+{ const p=tgeo.attributes.position;
+  for(let k=0;k<p.count;k++){ const i=k%GRID,j=Math.floor(k/GRID);
+    p.setY(k,W.heights[j*GRID+i]); }
+  tgeo.computeVertexNormals();
+  const n=tgeo.attributes.normal, col=new Float32Array(p.count*3);
+  for(let k=0;k<p.count;k++){
+    const y=p.getY(k), s=(1-n.getY(k))*1.5;
+    let r=0.42,g=0.38,b=0.27;
+    if(y<WATER_Y+0.7){r=0.34;g=0.33;b=0.26;} else if(y>7.4){r=0.46;g=0.42;b=0.36;}
+    col[k*3]=r+s*0.10; col[k*3+1]=g+s*0.07; col[k*3+2]=b+s*0.04;
+  }
+  tgeo.setAttribute('color',new THREE.BufferAttribute(col,3));
+}
+/* ⚠️ vertexColors MULTIPLY material.color, and the colours baked above are
+   already absolute albedo — a tinted base darkened the whole world twice and
+   made midday read as dusk. White here; the optics tint by multiplying. */
+const tmat=new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.97,vertexColors:true});
+scene.add(new THREE.Mesh(tgeo,tmat));
+
+const water=new THREE.Mesh(new THREE.PlaneGeometry(WORLD_SIZE,WORLD_SIZE),
+  new THREE.MeshStandardMaterial({color:0x2b4450,roughness:0.22,metalness:0.35,
+    transparent:true,opacity:0.86}));
+water.rotation.x=-Math.PI/2; water.position.y=WATER_Y; scene.add(water);
+
+/* ground cover — placement PRNG is the sim's, so it is seed-stable */
+const COVER_N=26000;
+const bladeGeo=new THREE.ConeGeometry(0.05,0.62,3); bladeGeo.translate(0,0.31,0);
+const bladeMat=new THREE.MeshStandardMaterial({color:0x6a6b3e,roughness:1,flatShading:true});
+const cover=new THREE.InstancedMesh(bladeGeo,bladeMat,COVER_N);
+cover.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+const coverBase=[];
+{ const m=new THREE.Matrix4(),q=new THREE.Quaternion(),p=new THREE.Vector3(),
+      s=new THREE.Vector3(),e=new THREE.Euler();
+  let n=0,guard=0;
+  while(n<COVER_N && guard<COVER_N*6){ guard++;
+    const x=(vrng()-0.5)*WORLD_SIZE*0.985, z=(vrng()-0.5)*WORLD_SIZE*0.985;
+    const y=W.heightAt(x,z);
+    if(y<WATER_Y+0.25) continue;
+    if(vrng()>W.coverAt(x,z)*1.25) continue;
+    const sc=0.6+vrng()*1.5, ry=vrng()*Math.PI*2;
+    e.set(0,ry,0); q.setFromEuler(e); p.set(x,y,z); s.set(sc,sc*(0.7+W.rng()*0.9),sc);
+    m.compose(p,q,s); cover.setMatrixAt(n,m); coverBase.push({x,y,z,s:sc,ry}); n++;
+  }
+  cover.count=n;
+}
+scene.add(cover);
+
+const rockMat=new THREE.MeshStandardMaterial({color:0x55503f,roughness:0.95,flatShading:true});
+const rocks=new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1,0),rockMat,140);
+{ const m=new THREE.Matrix4(),q=new THREE.Quaternion(),p=new THREE.Vector3(),
+      s=new THREE.Vector3(),e=new THREE.Euler(); let n=0;
+  for(let k=0;k<420&&n<140;k++){
+    const x=(vrng()-0.5)*WORLD_SIZE*0.94,z=(vrng()-0.5)*WORLD_SIZE*0.94,y=W.heightAt(x,z);
+    if(y<WATER_Y+0.6) continue;
+    const sc=0.5+vrng()*1.9;
+    e.set(vrng()*3,vrng()*3,vrng()*3); q.setFromEuler(e);
+    p.set(x,y+sc*0.3,z); s.set(sc,sc*0.75,sc*1.1);
+    m.compose(p,q,s); rocks.setMatrixAt(n++,m);
+  }
+  rocks.count=n;
+}
+scene.add(rocks);
+
+/* ============================================================
+   THE QUARRY — a stilt-grazer. IT HAS EYES.
+   ============================================================ */
+const eyeMat=new THREE.MeshStandardMaterial({color:0x1a1410,roughness:0.25,
+  emissive:0x221108,emissiveIntensity:0.5});
+function buildGrazer(){
+  const g=new THREE.Group();
+  const hide=new THREE.MeshStandardMaterial({color:0x8a7256,roughness:0.9,flatShading:true});
+  const dark=new THREE.MeshStandardMaterial({color:0x4a3f33,roughness:0.95,flatShading:true});
+  const body=new THREE.Mesh(new THREE.IcosahedronGeometry(0.86,1),hide);
+  body.scale.set(1.5,0.82,0.95); body.position.y=2.05; g.add(body);
+  const neck=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.2,1.5,5),hide);
+  neck.position.set(1.2,2.62,0); neck.rotation.z=-0.5; g.add(neck);
+  /* head, with eyes set wide for peripheral vision — a Watcher's skull */
+  const head=new THREE.Group(); head.position.set(1.72,3.1,0);
+  const skull=new THREE.Mesh(new THREE.IcosahedronGeometry(0.34,1),hide);
+  skull.scale.set(1.25,0.85,0.9); head.add(skull);
+  for(const s of [-1,1]){
+    const eye=new THREE.Mesh(new THREE.SphereGeometry(0.105,10,8),eyeMat);
+    eye.position.set(0.10,0.10,s*0.27); head.add(eye);
+    const brow=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.05,0.12),dark);
+    brow.position.set(0.12,0.21,s*0.26); head.add(brow);
+  }
+  const muzzle=new THREE.Mesh(new THREE.ConeGeometry(0.16,0.42,6),dark);
+  muzzle.rotation.z=-Math.PI/2; muzzle.position.set(0.42,-0.02,0); head.add(muzzle);
+  /* ears — this thing hears you too */
+  for(const s of [-1,1]){
+    const ear=new THREE.Mesh(new THREE.ConeGeometry(0.09,0.44,4),dark);
+    ear.position.set(-0.16,0.3,s*0.19); ear.rotation.set(s*0.4,0,-0.25); head.add(ear);
+  }
+  g.add(head);
+  const legs=[];
+  for(let i=0;i<4;i++){
+    const L=new THREE.Group();
+    const up=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.075,1.15,4),dark);
+    up.position.y=-0.58; L.add(up);
+    const lo=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.045,1.15,4),dark);
+    lo.position.y=-1.72; L.add(lo);
+    L.position.set(i<2?0.72:-0.72,2.0,(i%2)?0.5:-0.5); g.add(L); legs.push(L);
+  }
+  g.userData={legs,head,body};
+  return g;
+}
+/* ⚠️ fauna[0] — the animal you came for — is generated like everything else.
+   buildGrazer() is kept only as the fallback shape. */
+let grazer=null;
+
+/* ============================================================
+   THE BIOSPHERE (M5) — the rest of the web, on screen.
+   Placeholder art, but the SILHOUETTES have to differ: you should be able to
+   name what you are looking at from its outline alone. M4 makes that a formal
+   generator test at 150m in thermal; this is the shape it has to hit.
+   ============================================================ */
+/* ⚠️ THE BODY PLAN IS GENERATED, NOT AUTHORED (M4). The view reads
+   locomotion + scale + mechanism off the species worldgen produced, so the
+   thing on screen is the thing the silhouette test measured. A hand-written
+   lookup table here would quietly decouple the two and the acceptance test
+   would be measuring a body nobody ever renders. */
+const MECH_TINT={ colonial:0x7a6a70, puppeteer:0x6a6a5a, compressed:0x8a7a52,
+  chemical:0x6f8a6a, lithic:0x8a8378, buoyant:0x9aa4b0, mimetic:0x77785f,
+  symbiont:0x7d6a58, echoic:0x6b7480, phototropic:0x94854a };
+function planOf(key){
+  const sp=sim.species[key];
+  const L=LOCOMOTION[sp.loco];
+  return { c: MECH_TINT[sp.mech] || 0x8a7256,
+    body:[L.bodyL*sp.scale, L.bodyH*sp.scale*0.55, L.bodyW*sp.scale],
+    h: (L.legLen*sp.scale) + L.bodyH*sp.scale*0.35,
+    legs: L.legLen*sp.scale, legCount: L.legs,
+    neck: sp.neckLong ? L.bodyH*sp.scale*0.9 : L.bodyH*sp.scale*0.35,
+    hover: sp.hover, armour: sp.armour, sp };
+}
+function buildCreature(key){
+  const L=planOf(key);
+  const g=new THREE.Group();
+  const hide=new THREE.MeshStandardMaterial({color:L.c,
+    roughness:L.armour>0?0.55:0.92, metalness:L.armour>0?0.35:0,
+    flatShading:true});
+  const dark=new THREE.MeshStandardMaterial({color:0x3a322a,roughness:0.95,flatShading:true});
+  const body=new THREE.Mesh(new THREE.IcosahedronGeometry(0.8,1),hide);
+  body.scale.set(...L.body); body.position.y=L.h; g.add(body);
+  const neck=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.18,L.neck,5),hide);
+  neck.position.set(L.body[0]*0.62,L.h+L.neck*0.36,0); neck.rotation.z=-0.55; g.add(neck);
+  const head=new THREE.Group();
+  head.position.set(L.body[0]*0.62+L.neck*0.42, L.h+L.neck*0.68, 0);
+  const skull=new THREE.Mesh(new THREE.IcosahedronGeometry(0.3,1),hide);
+  skull.scale.set(1.3,0.8,0.85); head.add(skull);
+  /* ⚠️ ON AN EYELESS WORLD, DO NOT DRAW EYES. The Law has to hold in the
+     geometry or it is a caption — this is the same class of contradiction as
+     a sepia prequel spawning a house cat. */
+  if(!sim.law.effect.noSight){
+    for(const s of [-1,1]){
+      const eye=new THREE.Mesh(new THREE.SphereGeometry(0.09,8,6),eyeMat);
+      eye.position.set(0.09,0.09,s*0.24); head.add(eye);
+    }
+  } else {
+    /* something else does the seeing: a sensory pit, and it faces forward */
+    const pit=new THREE.Mesh(new THREE.SphereGeometry(0.13,8,6),
+      new THREE.MeshStandardMaterial({color:0x241c18,roughness:1,flatShading:true}));
+    pit.position.set(0.22,0.02,0); pit.scale.set(0.6,1,1); head.add(pit);
+  }
+  g.add(head);
+  const legs=[];
+  /* leg COUNT comes from the locomotion type — a multipede has eight and a
+     drifter has none, and that is most of what tells them apart at range */
+  const n=L.legCount;
+  for(let i=0;i<n;i++){
+    const Lg=new THREE.Group();
+    const half=Math.floor(n/2), row=i<half?1:-1, idx=i%half;
+    const up=new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.07,L.legs,4),dark);
+    up.position.y=-L.legs*0.5; Lg.add(up);
+    const lo=new THREE.Mesh(new THREE.CylinderGeometry(0.065,0.045,L.legs,4),dark);
+    lo.position.y=-L.legs*1.5; Lg.add(lo);
+    Lg.position.set(L.body[0]*(half>1?(idx/(half-1)-0.5)*0.9:0.42)*2*0.5,
+                    L.h-L.body[1]*0.5, row*L.body[2]*0.45);
+    g.add(Lg); legs.push(Lg);
+  }
+  /* NOTHING HERE TOUCHES THE GROUND — a drifter needs a reason to be up there */
+  if(L.hover){
+    const sac=new THREE.Mesh(new THREE.SphereGeometry(L.body[2]*0.7,8,6),
+      new THREE.MeshStandardMaterial({color:0xb9c4cc,roughness:0.4,
+        transparent:true,opacity:0.55,flatShading:true}));
+    sac.position.y=L.h+L.body[1]*1.5; sac.scale.y=0.75; g.add(sac);
+  }
+  g.userData={legs,head,body,look:L};
+  return g;
+}
+const faunaViews=[];
+function setupFauna(){
+  for(const v of faunaViews) scene.remove(v);
+  faunaViews.length=0;
+  if(grazer) scene.remove(grazer);
+  grazer=buildCreature(sim.Q.species); scene.add(grazer);   // fauna[0]
+  for(let i=1;i<sim.fauna.length;i++){
+    const v=buildCreature(sim.fauna[i].species);
+    scene.add(v); faunaViews.push(v);
+  }
+}
+function drawFauna(){
+  const t=sim.simSec;
+  for(let i=0;i<faunaViews.length;i++){
+    const c=sim.fauna[i+1], v=faunaViews[i];
+    if(!c){ v.visible=false; continue; }
+    const shown=c.alive && !c.gone;
+    v.visible=shown; if(!shown) continue;
+    const L=v.userData.look;
+    /* on an airborne world nothing walks — it rides above the ground */
+    const lift = L.hover ? 2.2 + Math.sin(sim.simSec*0.7+i)*0.35 : 0;
+    v.position.set(c.x, W.heightAt(c.x,c.z)+lift, c.z);
+    v.rotation.y=c.facing-Math.PI/2;
+    v.userData.legs.forEach((Lg,k)=>{
+      Lg.rotation.z=Math.sin(t*3.4+k*1.6+i)*(c.speed>0.3?0.40:0.03); });
+    /* the same tell the quarry has: sweeping while calm, locked on when not */
+    const hd=v.userData.head;
+    if(c.alertState==='CALM'){ hd.rotation.y=Math.sin(t*0.6+i)*0.5; }
+    else {
+      let a=Math.atan2(sim.player.x-c.x,sim.player.z-c.z)-c.facing;
+      while(a>Math.PI)a-=Math.PI*2; while(a<-Math.PI)a+=Math.PI*2;
+      hd.rotation.y+=(Math.max(-1.3,Math.min(1.3,a))-hd.rotation.y)*0.12;
+    }
+  }
+}
+/* carrion — a kill you did not make, and the reason the scavengers came */
+const carrionGeo=new THREE.IcosahedronGeometry(0.62,0);
+const carrionMat=new THREE.MeshStandardMaterial({color:0x5a4038,roughness:1,
+  flatShading:true});
+const carrionMesh=new THREE.InstancedMesh(carrionGeo,carrionMat,24);
+carrionMesh.count=0; scene.add(carrionMesh);
+/* ⚠️ CALLS ARE VIEW-ONLY. Deciding to call must never touch the sim's rng or
+   a headless soak and a rendered run diverge — so the schedule lives here,
+   in Math.random, and the sim never knows a sound happened. */
+let callT=3+Math.random()*6;
+function updateCalls(dt){
+  sfx.setListener(sim.player.x, sim.player.z, sim.player.yaw);
+  callT-=dt; if(callT>0) return;
+  callT = 5 + Math.random()*14;
+  const live = sim.fauna.filter(f=>f.alive && !f.gone);
+  if(!live.length) return;
+  const c = live[Math.floor(Math.random()*live.length)];
+  const sp = sim.species[c.species];
+  if(!sp) return;
+  const heard = sfx.voice(sp.voice, c.x, c.z);
+  /* a call you can hear is a call you can walk toward — that is the point */
+  /* stereo alone cannot tell you front from back, so the readout uses the
+     front/back component the probe returns rather than pretending pan can */
+  if(heard && heard.gain>0.22){
+    const dir = Math.abs(heard.pan)>0.45 ? (heard.pan>0?'TO YOUR RIGHT':'TO YOUR LEFT')
+              : heard.front>0 ? 'AHEAD OF YOU' : 'BEHIND YOU';
+    flash(sp.label+' — SOMEWHERE '+dir);
+  }
+}
+
+function drawCarrion(){
+  let n=0;
+  for(const k of sim.carrion){
+    _p.set(k.x, W.heightAt(k.x,k.z)+0.3, k.z);
+    _s.setScalar(Math.max(0.3, 1-k.age/2600));
+    _m.compose(_p,_q,_s); carrionMesh.setMatrixAt(n++,_m);
+    if(n>=24) break;
+  }
+  carrionMesh.count=n; carrionMesh.instanceMatrix.needsUpdate=true;
+}
+setupFauna();
+
+/* scent puffs (pheromone optic) */
+const PUFF_MAX=260, puffs=[];
+const puffMesh=new THREE.InstancedMesh(new THREE.SphereGeometry(0.5,6,5),
+  new THREE.MeshBasicMaterial({color:0x8fd0ff,transparent:true,opacity:0.16,depthWrite:false}),
+  PUFF_MAX);
+puffMesh.count=0; puffMesh.visible=false; scene.add(puffMesh);
+
+/* tracks */
+const TRACK_MAX=200;
+const trackGeo=new THREE.CircleGeometry(0.17,6); trackGeo.rotateX(-Math.PI/2);
+const trackMat=new THREE.MeshBasicMaterial({color:0x2a2018,transparent:true,
+  opacity:0.5,depthWrite:false});
+const trackMesh=new THREE.InstancedMesh(trackGeo,trackMat,TRACK_MAX);
+trackMesh.count=0; scene.add(trackMesh);
+
+/* shaft along -Z so lookAt() (which aims -Z) points the head at the target */
+const spearGeo=new THREE.CylinderGeometry(0.012,0.03,2.0,5); spearGeo.rotateX(-Math.PI/2);
+const spearMat=new THREE.MeshStandardMaterial({color:0xb8a074,roughness:0.6,flatShading:true});
+const flying=[];
+
+/* ============================================================
+   INPUT
+   ============================================================ */
+const keys={}, gate=document.getElementById('gate');
+let pitch=0;
+/* You cannot use what the beast is wearing. Each of these is the wound
+   speaking through the controls rather than through a status icon. */
+function tryOptic(o,need){
+  if(need && !sim.hasKit(need)){
+    flash(KIT[need].label+' — GONE. IT IS WEARING IT.'); return; }
+  /* ⚠️ NOTHING HERE IS WARM — a TOOL law (§8). The optic still switches on;
+     it just shows you an empty world, which is the honest failure. You are
+     told once, and then you have to remember which rock you are standing on. */
+  if(o===1 && sim.law.effect.thermalBlind && optic!==1)
+    flash('NOTHING ON THIS WORLD RUNS A TEMPERATURE');
+  if(o===optic) return;
+  /* ⚠️ SWITCHING COSTS YOU — the tape loses tracking and you are blind for
+     half a second. That cost is the entire reason cycling optics is a
+     decision rather than a free scan. */
+  post.glitch(0.55,0.3);
+  setOptic(o);
+}
+addEventListener('keydown',e=>{ keys[e.code]=true;
+  if(wakeOpen){ if(e.code==='Space'||e.code==='Enter') dismissWake(); return; }
+  if(reckOpen){ if(e.code==='Space'||e.code==='Enter') dismissReckoning(); return; }
+  if(e.code==='Digit1')tryOptic(0,null);
+  if(e.code==='Digit2')tryOptic(1,'thermal');
+  if(e.code==='Digit3')tryOptic(2,'pheromone');
+  if(e.code==='KeyF')throwSpear();
+  if(e.code==='KeyC'){
+    if(!sim.hasKit('cloak')){ flash('THE CLOAK IS GONE. YOU ARE VISIBLE.'); }
+    else { sim.player.cloaked=!sim.player.cloaked;
+      post.glitch(0.9,0.12);   // engaging the cloak is a full interlace tear
+      flash(sim.player.cloaked?'CLOAK ENGAGED — YOUR TROPHY IS FORFEIT':'CLOAK DOWN'); }}
+  if(e.code==='KeyE'){ const r=sim.restSkip();
+    flash(r?('YOU REST — '+r.before+' → '+r.after):'YOU MUST BE STILL TO REST'); }
+});
+addEventListener('keyup',e=>keys[e.code]=false);
+gate.addEventListener('click',()=>{ gate.classList.add('hide');
+  sfx.resume();                       // audio needs a user gesture to start
+  renderer.domElement.requestPointerLock(); });
+el('wake').addEventListener('click',()=>{ if(dismissWake())
+  renderer.domElement.requestPointerLock(); });
+el('reck').addEventListener('click',()=>{ if(dismissReckoning())
+  renderer.domElement.requestPointerLock(); });
+addEventListener('click',()=>{ if(wakeOpen||reckOpen) return;
+  if(gate.classList.contains('hide') &&
+  document.pointerLockElement!==renderer.domElement)
+  renderer.domElement.requestPointerLock(); });
+addEventListener('mousemove',e=>{
+  if(document.pointerLockElement!==renderer.domElement) return;
+  sim.player.yaw-=e.movementX*0.0022;
+  pitch=Math.max(-1.4,Math.min(1.4,pitch-e.movementY*0.0022));
+});
+addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight);
+  post.setSize(innerWidth,innerHeight); });
+
+/* ============================================================
+   OPTICS
+   ============================================================ */
+let optic=0;
+const OPTIC_NAMES=['NONE','THERMAL','PHEROMONE'];
+/* Every optic RESETS to naked-eye first and then applies its own look, so
+   cycling 0→2→1→0 can never leave another optic's colours behind. */
+function setOptic(o){
+  optic=o;
+  el('opticname').textContent=OPTIC_NAMES[o];
+  /* scanlines/grain/interlace live in the post pass now — the DOM overlays
+     only stand in when WebGL2 (and therefore post) is unavailable */
+  post.setOptic(o);
+  el('scan').style.opacity = postOn ? '0' : (o===0?'.55':'.95');
+  el('grain').style.opacity = postOn ? '0' : '.09';
+  el('vig').style.opacity   = postOn ? '0' : '1';
+  puffMesh.visible=(o===2);
+  /* ⚠️ thermal has to light up EVERY warm body, not just the one you came
+     for — half the point of the optic is finding what else is out there. */
+  const setEmis=(hex,i)=>{
+    const paint=o=>o.traverse(m=>{ if(m.isMesh&&m.material.emissive){
+      m.material.emissive.setHex(hex); m.material.emissiveIntensity=i; }});
+    paint(grazer); for(const v of faunaViews) paint(v);
+  };
+
+  /* --- naked eye baseline --- */
+  /* the BIOME owns the palette — four or five colours per world, committed to */
+  renderer.toneMappingExposure=1.0;
+  tmat.color.setHex(BIOME_TINT); bladeMat.color.setHex(COVER_TINT);
+  rockMat.color.setHex(0x55503f); water.material.color.setHex(0x2b4450);
+  trackMat.color.setHex(0x2a2018); trackMat.opacity=0.5;
+  cover.visible=true; water.visible=true;
+  setEmis(0x000000,0); eyeMat.emissive.setHex(0x221108); eyeMat.emissiveIntensity=0.5;
+
+  if(o===1){ /* THERMAL — warm bodies through foliage and dark.
+                Hiding the cover IS "through foliage"; it is also the honest
+                statement that thermal does not show you grass. */
+    scene.fog.color.setHex(0x04060c); renderer.setClearColor(0x04060c);
+    renderer.toneMappingExposure=0.72;
+    tmat.color.setHex(0x0a1020); rockMat.color.setHex(0x0a1220);
+    water.material.color.setHex(0x061020);
+    /* just enough ground to keep the horizon readable — thermal is meant to
+       be PARTIALLY blind so you cycle, not to be unnavigable */
+    hemi.intensity=0.34; sun.intensity=0.15; fog.density=0.0045;
+    cover.visible=false;
+    /* on a cold world there is nothing warm to find, and the optic says so
+       by showing you nothing at all */
+    setEmis(sim.law.effect.thermalBlind ? 0x120806 : 0xff5a20,
+            sim.law.effect.thermalBlind ? 0.12 : 1.4);
+    trackMat.color.setHex(0x1a1420); trackMat.opacity=0.25;   // cold sign, faint
+  } else if(o===2){ /* PHEROMONE — scent as a drifting volume, sign lit up */
+    scene.fog.color.setHex(0x0a0a16); renderer.setClearColor(0x0a0a16);
+    renderer.toneMappingExposure=0.8;
+    tmat.color.setHex(0x1a1826); bladeMat.color.setHex(0x201f30);
+    rockMat.color.setHex(0x1a1826); water.material.color.setHex(0x101828);
+    hemi.intensity=0.35; sun.intensity=0.2; fog.density=0.0055;
+    setEmis(0x30ff90,0.7);
+    trackMat.color.setHex(0x40ffa0); trackMat.opacity=0.85;
+  } else {
+    applySky();
+  }
+}
+
+function applySky(){
+  if(optic!==0) return;
+  const h=sim.todHours();
+  const d=Math.max(0,Math.sin((h-6)/24*Math.PI*2)*0.5+0.5);
+  const dawnish=Math.exp(-Math.pow((h-5.5)/1.6,2))+Math.exp(-Math.pow((h-19)/1.6,2));
+  const c=new THREE.Color(0x0d1220).lerp(new THREE.Color(0x8fa8c4),d)
+          .lerp(new THREE.Color(0xd08a52),Math.min(0.75,dawnish));
+  scene.fog.color.copy(c); renderer.setClearColor(c);
+  sun.intensity=0.14+d*1.5;
+  sun.color.setHex(dawnish>0.35?0xffb070:0xffd8a8);
+  hemi.intensity=0.16+d*0.5;
+  const a=(h-6)/24*Math.PI*2;
+  sun.position.set(Math.cos(a)*70,Math.max(4,Math.sin(a)*70),26);
+  fog.density=0.0055+(1-d)*0.006;
+}
+
+/* ============================================================
+   VIEW UPDATES
+   ============================================================ */
+const _m=new THREE.Matrix4(),_q=new THREE.Quaternion(),
+      _p=new THREE.Vector3(),_s=new THREE.Vector3(),_e=new THREE.Euler(),
+      _v=new THREE.Vector3(),_qc=new THREE.Quaternion();
+/* ⚠️ _q must stay IDENTITY — drawTracks and drawPuffs compose with it and
+   have no rotation of their own. Anything that needs a rotation uses _qc. */
+
+function movePlayer(dt){
+  const p=sim.player;
+  /* a torn leg is not a status icon — it is in the movement equation */
+  const sp=(p.crouch?1.6:p.slow?2.1:5.0)*sim.hunterMods().speed;
+  let fx=0,fz=0;
+  if(keys['KeyW'])fz-=1; if(keys['KeyS'])fz+=1;
+  if(keys['KeyA'])fx-=1; if(keys['KeyD'])fx+=1;
+  p.crouch=!!(keys['ControlLeft']||keys['ControlRight']);
+  p.slow=!!(keys['ShiftLeft']||keys['ShiftRight']);
+  p.moving=!!(fx||fz);
+  if(p.moving){
+    const l=Math.hypot(fx,fz); fx/=l; fz/=l;
+    /* Camera basis at yaw: forward = (-sin,-cos), right = (cos,-sin).
+       The old code rotated the input vector the WRONG WAY (the sin terms were
+       both sign-flipped), so W and D were correct only at yaw 0 and drifted
+       apart from the view at every other heading. Verified by walking each of
+       WASD across four yaws and dotting the result against the real camera
+       basis: all 16 now come out at 1.000. */
+    const cs=Math.cos(p.yaw),sn=Math.sin(p.yaw);
+    const nx=p.x+(fx*cs+fz*sn)*sp*dt, nz=p.z+(-fx*sn+fz*cs)*sp*dt;
+    if(Math.abs(nx)<WORLD_SIZE*0.47&&Math.abs(nz)<WORLD_SIZE*0.47&&
+       W.heightAt(nx,nz)>WATER_Y-0.3){ p.x=nx; p.z=nz; }
+  }
+  placeCamera(dt);
+}
+
+function placeCamera(dt){
+  const p=sim.player;
+  const eye=(p.crouch?1.05:1.7)*(1-woundCrouch());
+  const y=W.heightAt(p.x,p.z)+eye;
+  const k=Math.min(1,dt*11);
+  camera.position.set(p.x, camera.position.y+(y-camera.position.y)*k, p.z);
+  camera.rotation.set(pitch,p.yaw,0,'YXZ');
+  /* the hit that opened you up, and the sway of carrying it afterwards */
+  if(cam_shake>0){
+    cam_shake=Math.max(0,cam_shake-dt*1.6);
+    const a=cam_shake*cam_shake*0.11;
+    camera.rotation.z=(Math.random()-0.5)*a;
+    camera.rotation.x+=(Math.random()-0.5)*a;
+  } else if(sim.hunterMods().bleeding){
+    camera.rotation.z=Math.sin(sim.simSec*1.7)*0.014;
+  }
+}
+
+function drawQuarry(){
+  const Q=sim.Q;
+  grazer.visible=!Q.gone;
+  /* the model is built nose-along-+X; the sim's heading convention is
+     (sin f, cos f), so the body needs a quarter turn or it walks sideways */
+  const GL=grazer.userData.look;
+  const lift = GL.hover ? 2.2+Math.sin(sim.simSec*0.7)*0.35 : 0.3;
+  grazer.position.set(Q.x,W.heightAt(Q.x,Q.z)+lift,Q.z);
+  grazer.rotation.y=Q.facing-Math.PI/2;
+  if(!Q.alive){ grazer.rotation.z=1.4; return; }
+  const t=sim.simSec;
+  grazer.userData.body.position.y=GL.h+Math.sin(t*3.1)*0.05*(Q.speed>0.3?1:0.18);
+  /* legs swing about local Z — that is the model's fore/aft axis */
+  grazer.userData.legs.forEach((L,i)=>{
+    L.rotation.z=Math.sin(t*3.4+i*1.6)*(Q.speed>0.3?0.42:0.03); });
+  /* the head SWEEPS when calm and LOCKS toward you when alerted —
+     the player must be able to read that it has been noticed */
+  const hd=grazer.userData.head;
+  if(Q.alertState==='CALM'){
+    hd.rotation.y=Math.sin(t*0.6)*0.55; hd.rotation.x=Math.sin(t*0.4)*0.2+0.15;
+  } else {
+    let a=Math.atan2(sim.player.x-Q.x,sim.player.z-Q.z)-Q.facing;
+    while(a>Math.PI)a-=Math.PI*2; while(a<-Math.PI)a+=Math.PI*2;
+    hd.rotation.y+=(Math.max(-1.3,Math.min(1.3,a))-hd.rotation.y)*0.12;
+    hd.rotation.x+=(-0.1-hd.rotation.x)*0.12;
+  }
+}
+
+function drawTracks(){
+  let n=0;
+  for(const t of sim.tracks){
+    const life=1-Math.min(1,t.age/900);
+    if(life<=0.02) continue;
+    _p.set(t.x,W.heightAt(t.x,t.z)+0.03,t.z);
+    _s.set(life*1.1+0.3,1,life*1.1+0.3);
+    _m.compose(_p,_q,_s); trackMesh.setMatrixAt(n++,_m);
+    if(n>=TRACK_MAX) break;
+  }
+  trackMesh.count=n; trackMesh.instanceMatrix.needsUpdate=true;
+}
+
+function drawPuffs(dt){
+  const p=sim.player, w=sim.windVec();
+  if((p.moving||puffs.length<40)&&puffs.length<PUFF_MAX)
+    puffs.push({x:p.x,z:p.z,y:W.heightAt(p.x,p.z)+1.0,age:0,r:0.5});
+  for(let i=puffs.length-1;i>=0;i--){
+    const q=puffs[i]; q.age+=dt;
+    q.x+=w.x*sim.wind.strength*7*dt; q.z+=w.z*sim.wind.strength*7*dt; q.r+=dt*0.55;
+    if(q.age>9) puffs.splice(i,1);
+  }
+  if(optic===2){
+    let n=0;
+    for(const q of puffs){
+      _p.set(q.x,Math.max(W.heightAt(q.x,q.z)+0.5,q.y),q.z); _s.setScalar(q.r);
+      _m.compose(_p,_q,_s); puffMesh.setMatrixAt(n++,_m);
+      if(n>=PUFF_MAX)break;
+    }
+    puffMesh.count=n; puffMesh.instanceMatrix.needsUpdate=true;
+  }
+}
+
+function drawCover(){
+  const w=sim.windVec(), amp=sim.wind.strength*0.24, t=sim.simSec*1.6;
+  const px=sim.player.x, pz=sim.player.z;
+  for(let i=0;i<cover.count;i++){
+    const b=coverBase[i];
+    const dx=b.x-px, dz=b.z-pz;
+    if(dx*dx+dz*dz>900) continue;
+    const s=Math.sin(t+b.x*0.35+b.z*0.28)*amp;
+    _p.set(b.x,b.y,b.z); _s.set(b.s,b.s,b.s);
+    _e.set(w.z*s,b.ry,-w.x*s); _qc.setFromEuler(_e);
+    _m.compose(_p,_qc,_s); cover.setMatrixAt(i,_m);
+  }
+  cover.instanceMatrix.needsUpdate=true;
+}
+
+function throwSpear(){
+  if(!gate.classList.contains('hide')||wakeOpen||reckOpen) return;
+  if(sim.player.spears<=0){ flash('NO SPEARS'); return; }
+  sim.player.spears--;
+  const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+  /* a broken hand does not fly where you are looking (view-side scatter —
+     the sim owns the wound, the renderer owns the wobble) */
+  const err=sim.hunterMods().throwErr;
+  if(err>0){ dir.x+=(Math.random()-0.5)*err; dir.y+=(Math.random()-0.5)*err;
+             dir.z+=(Math.random()-0.5)*err; dir.normalize(); }
+  const mesh=new THREE.Mesh(spearGeo,spearMat); scene.add(mesh);
+  flying.push({p:camera.position.clone(),v:dir.multiplyScalar(30).add(new THREE.Vector3(0,1.6,0)),mesh});
+  sim.player.noise=Math.max(sim.player.noise,0.55);
+}
+function updateSpears(dt){
+  const Q=sim.Q;
+  for(let i=flying.length-1;i>=0;i--){
+    const s=flying[i];
+    s.v.y-=13*dt; s.p.addScaledVector(s.v,dt);
+    s.mesh.position.copy(s.p); s.mesh.lookAt(_v.copy(s.p).add(s.v));
+    const gy=W.heightAt(Q.x,Q.z);
+    if(!Q.gone&&Math.hypot(s.p.x-Q.x,s.p.z-Q.z)<1.5&&s.p.y>gy+1.2&&s.p.y<gy+3.4){
+      /* WHERE it hit decides the trophy — a skull shot ruins it (§3). There
+         are no health bars; you read the body. */
+      const part = s.p.y > gy+3.0 ? 'skull' : 'body';
+      const dist = Math.hypot(sim.player.x-Q.x, sim.player.z-Q.z);
+      const rec  = sim.strike({dist, part, thrown:true});
+      s.mesh.visible=false; flying.splice(i,1);
+      if(rec.overkill){ flash('YOU STRIKE A DEAD THING — THE TROPHY IS VOID');
+                        showReckoning(sim.hunter.trophies[sim.hunter.trophies.length-1]); }
+      else {
+        /* THE NEMESIS HUNT, PAID OFF: kill the thing wearing your gear and
+           you take it back off the carcass. */
+        if(Q.carrying){ const k=Q.carrying; sim.hunter.kit[k]=true; Q.carrying=null;
+          flash('YOU CUT YOUR '+kitOwn(k)+' BACK OFF IT'); }
+        showReckoning(rec);
+      }
+      continue;
+    }
+    const h=W.heightAt(s.p.x,s.p.z);
+    if(s.p.y<=h){ s.p.y=h; s.mesh.position.copy(s.p); flying.splice(i,1);
+      if(Math.hypot(s.p.x-Q.x,s.p.z-Q.z)<28) Q.awareness=Math.min(1,Q.awareness+0.5); }
+  }
+}
+
+/* ============================================================
+   THE WOUND — the view side (S4)
+   The sim owns the consequence; this owns telling you about it.
+   ============================================================ */
+let wakeOpen=false, wakeT=0, bloodOn=false, cam_shake=0;
+
+/* "YOUR THE CLOAK" — kit labels carry their own article, so strip it when the
+   name follows a possessive */
+const kitOwn=k=>KIT[k].label.replace(/^THE /,'');
+
+/* a limp or a gut wound drops your stance — you carry yourself differently */
+function woundCrouch(){ const m=sim.hunterMods(); return Math.min(0.18,m.count*0.05); }
+
+/* TIER 1 — it opened you up and the hunt goes on. No screen, no modal:
+   the room just gets redder and you get louder. */
+function onWounded(ev){
+  flash('IT OPENED YOU UP — YOU ARE BLEEDING');
+  el('blood').classList.add('on');
+  cam_shake=0.5;
+}
+
+function onBroken(ev){
+  /* pointer lock goes, because you are not down there any more */
+  if(document.pointerLockElement) document.exitPointerLock();
+  el('blood').classList.remove('on');
+  const I=INJURIES[ev.injury];
+  el('wk-cause').textContent = ev.cause==='charge'
+    ? 'IT CAME THROUGH YOU · NOTHING REWOUND' : 'NOTHING REWOUND';
+  el('wk-inj').textContent = I.label + (ev.sev>1?'  ×'+ev.sev:'');
+  el('wk-injnote').textContent = I.note;
+  /* ⚠️ YOU choose what it keeps. The card cannot be dismissed until you have —
+     deciding what you can least afford to lose IS the moment (bible §17 Q1). */
+  const opts=(ev.options||[]);
+  const pick=el('wk-pick'); pick.innerHTML='';
+  if(opts.length){
+    el('wk-took').textContent='IT WILL NOT LEAVE EMPTY-HANDED';
+    el('wk-tooknote').textContent='Choose what you can least afford to lose.';
+    for(const k of opts){
+      const b=document.createElement('button');
+      b.textContent=KIT[k].label; b.dataset.kit=k;
+      b.addEventListener('click',e=>{ e.stopPropagation(); chooseLoss(k); });
+      pick.appendChild(b);
+    }
+    el('wk-go').style.display='none';
+  } else {
+    el('wk-took').textContent='NOTHING LEFT TO TAKE';
+    el('wk-tooknote').textContent='You had nothing left worth carrying off.';
+    el('wk-go').style.display='';
+  }
+  const hrs=(ev.blackout/ (90*60) * 24);
+  el('wk-out').innerHTML =
+    'You were out for '+hrs.toFixed(1)+' hours. The wind turned, the sign went cold, '+
+    'and the day moved on without you.<br><br>'+
+    '<b>It is still down there</b>, wary of you now — and whatever you hand over, '+
+    'it will be wearing when you find it again.'+
+    (ev.credit>0
+      ? '<br><br><i>You were in the open when it took you. That is a scar, not a shame '+
+        '— it will be counted.</i>'
+      : '<br><br><i>You were hidden. There is no scar to show for it, and nothing to count.</i>');
+  el('wake').classList.add('on');
+  wakeOpen=true; wakeT=0;
+}
+function chooseLoss(k){
+  const took=sim.resolveLoss(k);
+  if(!took) return;
+  const pick=el('wk-pick'); pick.innerHTML='';
+  el('wk-took').textContent=KIT[took].label;
+  el('wk-tooknote').textContent=KIT[took].taken;
+  el('wk-go').style.display='';
+}
+function updateWound(dt){
+  if(wakeOpen) wakeT+=dt;
+  /* the bleed tell tracks the sim, so it also clears when the wound closes */
+  const b=sim.hunterMods().bleeding;
+  if(b!==bloodOn){ bloodOn=b; el('blood').classList.toggle('on',b);
+    if(!b && !wakeOpen) flash('THE BLEEDING HAS STOPPED'); }
+}
+function dismissWake(){
+  if(!wakeOpen || wakeT<1.2) return false;      // let the fade finish landing
+  if(sim.hunter.pendingLoss) return false;      // it does not leave empty-handed
+  wakeOpen=false; el('wake').classList.remove('on');
+  /* an optic you no longer own cannot stay on your face */
+  if((optic===1&&!sim.hasKit('thermal'))||(optic===2&&!sim.hasKit('pheromone'))) setOptic(0);
+  last=performance.now();
+  return true;
+}
+function triggerBreak(cause){ const ev=sim.breakHunter(cause||'test'); onBroken(ev); return ev; }
+
+/* ============================================================
+   THE RECKONING — the view side (M2)
+   The sim graded the kill. This only has to make the grade legible, and
+   make the two currencies visibly disagree.
+   ============================================================ */
+let reckOpen=false, reckT=0;
+function showReckoning(rec){
+  if(document.pointerLockElement) document.exitPointerLock();
+  el('rk-species').textContent=rec.species;
+  el('rk-band').innerHTML='<b>'+rec.band.label+'</b> &middot; '+
+    (rec.specimenPct!==undefined?'':'')+
+    TIERS[sim.Q.tier].label+' &middot; '+(sim.Q.specimenPct*100).toFixed(0)+'%';
+  const v=!!rec.voided;
+  el('rk-void').style.display=v?'':'none';
+  el('rk-voidwhy').style.display=v?'':'none';
+  el('rk-voidwhy').textContent=rec.voidReason||'';
+  el('rk-grade').textContent=rec.methodLabel;
+  el('rk-gnote').textContent=METHOD[rec.method].note;
+  const row=(k,val,note)=>'<tr><td>'+k+(note?' <span style="opacity:.55">'+note+
+    '</span>':'')+'</td><td class="v">'+val+'</td></tr>';
+  el('rk-tbl').innerHTML =
+    row('QUARRY VALUE', rec.value.toFixed(0)) +
+    row('METHOD', '&times;'+rec.methodMult.toFixed(2), rec.methodLabel) +
+    row('CONDITION', '&times;'+rec.condition.toFixed(2),
+        rec.part==='skull'?'skull ruined':'solo') +
+    row('REPETITION', '&times;'+rec.repetition.toFixed(2),
+        rec.repetition<1?'you have done this before':'fresh approach') +
+    '<tr class="tot"><td>TROPHY</td><td class="v">'+rec.score+'</td></tr>';
+  el('rk-honor').textContent=rec.score;
+  el('rk-bounty').textContent=rec.bounty;
+  el('reck').classList.add('on'); reckOpen=true; reckT=0;
+}
+function dismissReckoning(){
+  if(!reckOpen || reckT<0.8) return false;
+  reckOpen=false; el('reck').classList.remove('on');
+  last=performance.now(); return true;
+}
+
+/* ============================================================
+   HUD
+   ============================================================ */
+let msgT=0, hudT=0, lastPer=null;
+function flash(t){ el('msg').innerHTML=t; el('msg').classList.add('on'); msgT=3.2; }
+/* THE LAW OF THIS WORLD, on the gate — it is the first thing you should know */
+el('prof').textContent='QUARRY: '+sim.prof.label.toUpperCase();
+{
+  const law=sim.law, bio=sim.biome;
+  document.querySelector('#gate .law').innerHTML =
+    '<i>THE LAW OF THIS WORLD</i><br><br>'+
+    '<b>'+law.label+'</b>'+(sim.wgen.legendary?' <i>(and that is rare)</i>':'')+
+    '<br><br>'+law.line+'<br><br><i>'+law.hunt+'</i>'+
+    '<br><br><span style="opacity:.6">'+bio.label+'</span>';
+  document.querySelector('#gate .sub').textContent =
+    sim.wgen.description.toUpperCase();
+}
+
+function updateHUD(dt){
+  msgT-=dt; if(msgT<=0) el('msg').classList.remove('on');
+  hudT+=dt; if(hudT<0.08) return; hudT=0;
+  const Q=sim.Q, p=sim.player, per=lastPer||{sight:0,sound:0,scent:0};
+  const set=(k,v,hot)=>{ el(k+'f').style.width=(v*100).toFixed(0)+'%';
+    el(k+'v').textContent=(v*100).toFixed(0);
+    el(k+'f').classList.toggle('hot',v>hot); };
+  set('sgt',Math.min(1,per.seeing||0),0.3);
+  set('snd',Math.min(1,per.hearing||0),0.4);
+  set('scn',Math.min(1,per.smell||0),0.3);
+  /* The arrow points where your SCENT GOES, relative to your facing.
+     Camera forward bearing (sim's atan2(x,z) convention) is yaw+PI, and a
+     bearing to your right is a NEGATIVE delta — so screen-clockwise degrees
+     are (facing - windDir). The old code used (windDir - yaw): negated AND
+     half a turn out, i.e. it pointed at your scent instead of away from it. */
+  let rel=(p.yaw+Math.PI)-sim.wind.dir;
+  while(rel>Math.PI) rel-=Math.PI*2; while(rel<-Math.PI) rel+=Math.PI*2;
+  el('windarrow').style.transform='rotate('+(rel*180/Math.PI).toFixed(1)+'deg)';
+  el('windtxt').textContent='SCENT — '+(sim.wind.strength<0.35?'LIGHT':
+    sim.wind.strength<0.75?'STEADY':'STRONG');
+  el('phase').textContent=sim.phaseName();
+  const h=sim.todHours();
+  el('tod').textContent=String(Math.floor(h)).padStart(2,'0')+':'+
+    String(Math.floor((h%1)*60)).padStart(2,'0');
+  const d=Math.hypot(Q.x-p.x,Q.z-p.z);
+  const mods=sim.hunterMods();
+  /* A RUINED EYE costs you ASSESSMENT — reading the animal at range is a real
+     step in the loop (S3), so losing it is a real loss, not a vignette. */
+  const readRange = mods.optic? 34 : 130;
+  el('qdist').textContent=Q.gone?'GONE':!Q.alive?'DOWN'
+    :d<readRange?d.toFixed(0)+'m':(mods.optic?'CANNOT FOCUS':'—');
+  el('qstate').textContent=(Q.gone||!Q.alive)?'—':Q.charging?'CHARGING':Q.state;
+  el('chan').textContent=Q.lastChannel;
+  el('spears').textContent=p.spears;
+  const aw=el('awareness');
+  aw.textContent=Q.charging?'COMING':Q.alertState;
+  aw.className=(Q.charging||Q.alertState==='SPOOKED')?'spooked'
+    :Q.alertState==='ALERT'?'alert':'';
+
+  /* --- what you still carry, and what it is wearing --- */
+  let k='';
+  for(const key of ['spears','blade','thermal','pheromone','cloak'])
+    k+='<div class="'+(sim.hasKit(key)?'':'gone')+'">'+KIT[key].label+'</div>';
+  for(const key of Object.keys(sim.hunter.injuries))
+    k+='<div class="hurt">'+INJURIES[key].label+
+       (sim.hunter.injuries[key].sev>1?' ×'+sim.hunter.injuries[key].sev:'')+'</div>';
+  /* ASSESSMENT — read the animal BEFORE you commit (§3). Without this players
+     kill everything and check afterward, which is the slot-machine behaviour
+     this game must not produce. Gravid is pheromone-only, on purpose. */
+  const a=sim.assess(optic);
+  if(Q.alive && !Q.gone && a.inRange){
+    el('assess').innerHTML =
+      '<div>'+a.species+'</div>'+
+      '<div class="band">'+bandOf(a.specimenPct).label+'</div>'+
+      '<div>'+TIERS[a.tier].label+' &middot; '+(a.specimenPct*100).toFixed(0)+'%</div>'+
+      (a.gravid===true ? '<div class="grav">GRAVID — DO NOT</div>'
+       : a.gravid===false ? '<div>NOT GRAVID</div>'
+       : '<div style="opacity:.5">GRAVID? — PHEROMONE ONLY</div>');
+  } else el('assess').innerHTML = (Q.alive&&!Q.gone)
+    ? '<div style="opacity:.5">'+(mods.optic?'CANNOT FOCUS':'TOO FAR TO READ')+'</div>' : '';
+
+  el('ledger').innerHTML='HONOR <b>'+Math.round(sim.hunter.honor)+
+    '</b> &nbsp; BOUNTY <b>'+Math.round(sim.hunter.bounty)+'</b>'+
+    (sim.hunter.voids?' &nbsp; <span style="color:#d97a4a">VOIDS '+sim.hunter.voids+'</span>':'');
+
+  if(mods.bleeding) k+='<div class="bleed">BLEEDING</div>';
+  if(Q.drewBlood && Q.alive)
+    k+='<div class="nem">IT HAS TASTED YOU</div>';
+  if(Q.carrying && Q.alive)
+    k+='<div class="nem">IT IS WEARING YOUR '+kitOwn(Q.carrying)+'</div>';
+  if(Q.wary>0 && Q.alive)
+    k+='<div class="nem">IT KNOWS YOU'+(Q.wary>1?' ×'+Q.wary:'')+'</div>';
+  el('kit').innerHTML=k;
+}
+
+/* grain */
+(function(){ const c=document.createElement('canvas'); c.width=c.height=110;
+  const x=c.getContext('2d'), d=x.createImageData(110,110);
+  for(let i=0;i<d.data.length;i+=4){ const v=Math.random()*255|0;
+    d.data[i]=d.data[i+1]=d.data[i+2]=v; d.data[i+3]=255; }
+  x.putImageData(d,0,0);
+  el('grain').style.backgroundImage='url('+c.toDataURL()+')'; })();
+
+/* ============================================================
+   LOOP
+   ============================================================ */
+setOptic(0); applySky();
+let last=performance.now(), spooked=0, frames=0, capMode=false;
+
+/* ONE frame, exactly as the loop draws it, minus input. Everything view-side
+   that belongs in a captured frame belongs in here — same contract as
+   __ttStep in Age of Toys. */
+function stepFrame(dt, withInput){
+  /* the wake and reckoning cards are modals — the world holds while you read */
+  if(wakeOpen){ updateWound(dt); post.update(dt,sim.simSec); drawFrame(); frames++; return; }
+  if(reckOpen){ reckT+=dt; post.update(dt,sim.simSec); drawFrame(); frames++; return; }
+  if(withInput) movePlayer(dt); else placeCamera(dt);
+  lastPer=sim.step(dt);
+  if(lastPer && lastPer.broke){
+    if(lastPer.broke.tier==='bleeding') onWounded(lastPer.broke);
+    else onBroken(lastPer.broke);
+  }
+  if(lastPer && lastPer.justSpooked){
+    spooked++;
+    flash(sim.Q.gone?'IT HAS HAD ENOUGH OF YOU'
+      :'IT KNOWS — IT '+(sim.Q.lastChannel==='SIGHT'?'SAW YOU'
+        :sim.Q.lastChannel==='SCENT'?'CAUGHT YOUR SCENT':'HEARD YOU'));
+  }
+  drawQuarry(); drawFauna(); drawCarrion(); updateCalls(dt);
+  drawTracks(); drawPuffs(dt); drawCover(); updateSpears(dt);
+  updateWound(dt);
+  if(optic===0) applySky();
+  updateHUD(dt);
+  post.update(dt,sim.simSec);
+  drawFrame();
+  frames++;
+}
+
+function loop(){
+  requestAnimationFrame(loop);
+  const now=performance.now(); const dt=Math.min(0.05,(now-last)/1000); last=now;
+  stepFrame(dt, true);
+}
+loop();
+
+/* ⚠️ rAF is SUSPENDED in a hidden tab (and in the agent's browser pane, where
+   document.hidden is permanently true) — without this the sim never advances
+   and nothing about the stalk can be verified. Age of Toys learned the same
+   thing. Gated on document.hidden so it can never double-step the rAF loop,
+   and short-circuited in capMode so a capture owns the clock. */
+setInterval(()=>{
+  if(!document.hidden || capMode) return;
+  const now=performance.now(); let dt=Math.min(0.25,(now-last)/1000); last=now;
+  while(dt>0){ const s=Math.min(0.05,dt); stepFrame(s,true); dt-=s; }
+},50);
+
+window.__Q={sim,PROFILES,frames:()=>frames,optic:()=>optic,setOptic,
+  coverCount:()=>cover.count,renderer,scene,camera,THREE,
+  /* --- verification handles --- */
+  step:(dt=1/60,n=1)=>{ for(let k=0;k<n;k++) stepFrame(dt,false); return frames; },
+  /* drives the REAL input path (movePlayer reads `keys`), so W/A/S/D can be
+     verified rather than assumed */
+  stepInput:(dt=1/60,n=1)=>{ for(let k=0;k<n;k++) stepFrame(dt,true); return frames; },
+  keys,
+  capMode:(on)=>{ capMode=!!on; last=performance.now(); return capMode; },
+  look:(yaw,pitchV)=>{ sim.player.yaw=yaw; if(pitchV!==undefined) pitch=pitchV;
+                       placeCamera(1); },
+  /* look AT the quarry, from wherever the player stands */
+  lookAtQuarry:()=>{ const Q=sim.Q,p=sim.player;
+    const dx=Q.x-p.x, dz=Q.z-p.z;
+    sim.player.yaw=Math.atan2(-dx,-dz);
+    const py=W.heightAt(p.x,p.z)+(p.crouch?1.05:1.7);
+    pitch=Math.atan2((W.heightAt(Q.x,Q.z)+2.4)-py, Math.hypot(dx,dz));
+    placeCamera(1); return {dist:Math.hypot(dx,dz),yaw:sim.player.yaw,pitch}; },
+  /* teleport for shot setup only — never a gameplay path */
+  place:(x,z)=>{ sim.player.x=x; sim.player.z=z; placeCamera(1); },
+  hunter:()=>sim.hunter, mods:()=>sim.hunterMods(),
+  breakHunter:(c)=>triggerBreak(c||'charge'),
+  woundHunter:(c)=>{ const ev=sim.woundHunter(c||'charge'); onWounded(ev); return ev; },
+  chooseLoss,
+  wakeOpen:()=>wakeOpen, dismissWake:()=>{ wakeT=99; return dismissWake(); },
+  reckOpen:()=>reckOpen, dismissReck:()=>{ reckT=99; return dismissReckoning(); },
+  post, postOn:(v)=>{ if(v!==undefined){ postOn=!!v&&post.available; setOptic(optic); }
+                      return postOn; },
+  fauna:()=>sim.fauna, census:()=>sim.census(), faunaViews, sfx,
+  wgen:()=>sim.wgen, law:()=>sim.law, biome:()=>sim.biome,
+  assess:()=>sim.assess(optic), reckoning:()=>sim.lastReckoning,
+  strike:(o)=>{ const r=sim.strike(o); if(!r.wounded) showReckoning(
+    r.overkill?sim.hunter.trophies[sim.hunter.trophies.length-1]:r); return r; },
+  /* the page photographs itself: render() and toDataURL() must be in the SAME
+     synchronous task, because the drawing buffer is only cleared on composite
+     (and this pane never composites, so the canvas is 0x0 until we size it) */
+  shot:async (name,w=1280,h=720,port=8401)=>{
+    const ow=renderer.domElement.width, oh=renderer.domElement.height;
+    renderer.setSize(w,h,false);
+    camera.aspect=w/h; camera.updateProjectionMatrix();
+    post.setSize(w,h);                    // ⚠️ or the RT stays the old size
+    drawFrame();                          // through the mask, same as you see it
+    const url=renderer.domElement.toDataURL('image/png');
+    renderer.setSize(ow||innerWidth,oh||innerHeight,false);
+    camera.aspect=(ow||innerWidth)/(oh||innerHeight); camera.updateProjectionMatrix();
+    post.setSize(ow||innerWidth,oh||innerHeight);
+    const r=await fetch('http://localhost:'+port+'/shot?name='+encodeURIComponent(name),
+      {method:'POST',body:url});
+    return r.status+' '+(await r.text());
+  }};
+window.__READY=true;
+
+}catch(e){ fatal(e); }
+</script>
+</body>
+</html>
