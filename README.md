@@ -54,3 +54,19 @@ voids the trophy. You were told.
 ---
 
 Built with Claude Code.
+
+## The ship
+
+Press **Tab** (or click *RETURN TO SHIP*) to go up to orbit. From there you get a star map of
+your sector, a fuel gauge, and your charts.
+
+**Fuel is bought with bounty, and bounty comes off the carcass.** A cloaked kill from a ridge
+pays well and scores nothing; an honest fight scores well and pays almost nothing. So the
+hunter who plays for honor is the hunter who gets stranded — that is the game, not a bug.
+
+Every world you visit is written into the **Field Journal**: its law, its water and bedding
+grounds, what you killed there, and anything that got away carrying a piece of your kit. A
+world you have been to can be plotted back to. Worlds you have never seen are UNCHARTED and
+show only what a jump to them would cost.
+
+`?newgame` wipes your save and starts a fresh galaxy.
