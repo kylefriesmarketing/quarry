@@ -618,53 +618,119 @@ function planOf(key){
    report after playing was simply "the monsters need to look better".
    Each locomotion type is now BUILT DIFFERENTLY, not scaled differently.
    ============================================================ */
-function segBody(g, mat, L, segs, opts={}){
-  /* a spine of tapering segments — reads as an ANIMAL, not a balloon */
+/* ⚠️⚠️ CONNECTED TOPOLOGY, NOT SCATTERED PRIMITIVES.
+   Kyle, after playing: "monsters dont look like actual things — they should
+   have mouths and eyes and all their peices be connected."  He was exactly
+   right about the cause: the old builder PLACED parts near each other and
+   nothing ever met. An animal reads as an animal when its silhouette is
+   CONTINUOUS.
+
+   So everything below is built as a skeleton: `bone()` spans precisely from
+   one point to another, and `joint()` puts a ball at every junction to cover
+   the seam. Nothing is positioned by eye; every part ends where the next
+   one begins. */
+const _A=new THREE.Vector3(), _B=new THREE.Vector3(), _UP=new THREE.Vector3(0,1,0);
+function bone(mat, a, b, r1, r2, seg=6){
+  _A.copy(a); _B.copy(b);
+  const dir=new THREE.Vector3().subVectors(_B,_A);
+  const len=Math.max(0.02, dir.length());
+  const m=new THREE.Mesh(new THREE.CylinderGeometry(r2,r1,len,seg),mat);
+  m.position.copy(_A).addScaledVector(dir,0.5);
+  m.quaternion.setFromUnitVectors(_UP, dir.normalize());
+  return m;
+}
+function joint(mat, p, r){
+  const m=new THREE.Mesh(new THREE.IcosahedronGeometry(r,1),mat);
+  m.position.copy(p); return m;
+}
+const V=(x,y,z)=>new THREE.Vector3(x,y,z);
+
+/* A spine: joints linked bone-to-bone, so there are NO GAPS.
+   ⚠️ THE JOINT MUST BE SMALLER THAN THE BONE IT SITS IN. At full radius the
+   spheres punched through the tube as a row of faceted diamonds and the
+   animal read as a string of beads rather than one body. 0.94 buries them. */
+function spine(g, mat, pts, radii){
   const out=[];
-  const len=L.body[0]*2, step=len/segs;
-  for(let i=0;i<segs;i++){
-    const t=i/(segs-1||1);
-    const taper=(opts.taper!==false) ? (0.55+Math.sin((1-Math.abs(t-0.42)*1.8)*1.4)*0.7) : 1;
-    const r=Math.max(0.09, L.body[2]*0.55*taper*(opts.fat||1));
-    const seg=new THREE.Mesh(new THREE.IcosahedronGeometry(r,0),mat);
-    seg.scale.set(1,(opts.flat||1)*(0.72+taper*0.35),1.05);
-    seg.position.set(len*0.5 - i*step, L.h + (opts.arch? Math.sin(t*Math.PI)*L.body[1]*0.5:0), 0);
-    seg.rotation.y=i*0.7;
-    g.add(seg); out.push(seg);
+  for(let i=0;i<pts.length;i++){
+    const j=joint(mat, pts[i], radii[i]*0.94); g.add(j); out.push(j);
+    if(i<pts.length-1) g.add(bone(mat, pts[i], pts[i+1], radii[i], radii[i+1]));
   }
   return out;
 }
-function limb(g, mat, x, y, z, len, thick, splay){
-  const Lg=new THREE.Group();
-  const up=new THREE.Mesh(new THREE.CylinderGeometry(thick,thick*0.72,len,5),mat);
-  up.position.y=-len*0.5; Lg.add(up);
-  const lo=new THREE.Mesh(new THREE.CylinderGeometry(thick*0.7,thick*0.4,len*0.95,5),mat);
-  lo.position.set(0,-len*1.45,len*0.10); lo.rotation.x=-0.22; Lg.add(lo);
-  const foot=new THREE.Mesh(new THREE.ConeGeometry(thick*1.5,thick*2.0,4),mat);
-  foot.rotation.x=Math.PI/2; foot.position.set(0,-len*1.9,len*0.14); Lg.add(foot);
-  Lg.position.set(x,y,z); Lg.rotation.z=splay||0;
-  g.add(Lg); return Lg;
+
+/* a limb that actually bends at a knee and ends in a foot */
+function makeLimb(mat, len, r, bend){
+  const g=new THREE.Group();
+  const hip=V(0,0,0), knee=V(0,-len*0.52, bend*len*0.20), foot=V(0,-len,-bend*len*0.06);
+  g.add(joint(mat,hip,r*1.15));            // a shoulder reads as a shoulder
+  g.add(bone(mat,hip,knee,r*1.15,r*0.80));
+  g.add(joint(mat,knee,r*0.78));           // ...but the knee stays inside the leg
+  g.add(bone(mat,knee,foot,r*0.80,r*0.46));
+  const hoof=new THREE.Mesh(new THREE.IcosahedronGeometry(r*1.0,0),mat);
+  hoof.position.copy(foot); hoof.scale.set(1,0.55,1.7); g.add(hoof);
+  return g;
 }
-function buildHead(L, hide, dark){
+
+/* ⚠️ A FACE. Cranium, a snout that is CONNECTED to it, a HINGED LOWER JAW so
+   there is a real mouth, teeth along it, and eyes set into brow ridges. */
+function buildHead(L, hide, dark, R){
+  R = R || 0.30;
   const head=new THREE.Group();
-  const skull=new THREE.Mesh(new THREE.IcosahedronGeometry(0.30,1),hide);
-  skull.scale.set(1.45,0.82,0.88); head.add(skull);
-  const jaw=new THREE.Mesh(new THREE.ConeGeometry(0.15,0.42,4),dark);
-  jaw.rotation.z=-Math.PI/2; jaw.position.set(0.34,-0.06,0); head.add(jaw);
+  const teeth=new THREE.MeshStandardMaterial({color:0xe8e0cf,roughness:0.5,
+    flatShading:true});
+
+  const cran=new THREE.Mesh(new THREE.IcosahedronGeometry(R,1),hide);
+  cran.scale.set(1.05,1.0,0.95); head.add(cran);
+  /* snout bridges cranium -> nose, so the head is ONE shape */
+  const nose=V(R*2.0,-R*0.22,0);
+  head.add(bone(hide, V(R*0.2,R*0.02,0), nose, R*0.80, R*0.34));
+  head.add(joint(hide, nose, R*0.34));
+  /* nostrils */
+  for(const s of [-1,1]){
+    const n=new THREE.Mesh(new THREE.SphereGeometry(R*0.08,6,5),dark);
+    n.position.set(R*1.92,-R*0.10,s*R*0.16); head.add(n);
+  }
+  /* THE MOUTH — hinged at the jaw joint, animated open and shut */
+  const jaw=new THREE.Group();
+  jaw.position.set(R*0.15,-R*0.34,0);
+  jaw.add(bone(dark, V(0,0,0), V(R*1.75,-R*0.02,0), R*0.40, R*0.22));
+  jaw.add(joint(dark, V(R*1.75,-R*0.02,0), R*0.20));
+  for(let i=0;i<5;i++){
+    const t=new THREE.Mesh(new THREE.ConeGeometry(R*0.085,R*0.30,3),teeth);
+    t.position.set(R*(0.45+i*0.30), R*0.14, R*0.15*(i%2?1:-1));
+    jaw.add(t);
+  }
+  head.add(jaw);
+  /* upper teeth, so a closed mouth still reads as a mouth */
+  for(let i=0;i<4;i++){
+    const t=new THREE.Mesh(new THREE.ConeGeometry(R*0.075,R*0.26,3),teeth);
+    t.rotation.z=Math.PI;
+    t.position.set(R*(0.6+i*0.32), -R*0.30, R*0.15*(i%2?1:-1));
+    head.add(t);
+  }
+
   /* ⚠️ ON AN EYELESS WORLD, DO NOT DRAW EYES. The Law has to hold in the
      geometry or it is a caption. */
   if(!sim.law.effect.noSight){
     for(const s of [-1,1]){
-      const eye=new THREE.Mesh(new THREE.SphereGeometry(0.085,8,6),eyeMat);
-      eye.position.set(0.10,0.10,s*0.23); head.add(eye);
-      const brow=new THREE.Mesh(new THREE.BoxGeometry(0.20,0.05,0.11),dark);
-      brow.position.set(0.12,0.20,s*0.22); head.add(brow);
+      const socket=new THREE.Mesh(new THREE.IcosahedronGeometry(R*0.30,0),dark);
+      socket.position.set(R*0.42,R*0.26,s*R*0.62); socket.scale.set(1,0.9,0.8);
+      head.add(socket);
+      const eye=new THREE.Mesh(new THREE.SphereGeometry(R*0.22,10,8),eyeMat);
+      eye.position.set(R*0.50,R*0.28,s*R*0.66); head.add(eye);
+      const brow=new THREE.Mesh(new THREE.IcosahedronGeometry(R*0.20,0),hide);
+      brow.position.set(R*0.44,R*0.52,s*R*0.58); brow.scale.set(1.5,0.5,1.0);
+      head.add(brow);
     }
   } else {
-    const pit=new THREE.Mesh(new THREE.SphereGeometry(0.15,8,6),
-      new THREE.MeshStandardMaterial({color:0x241c18,roughness:1,flatShading:true}));
-    pit.position.set(0.22,0.02,0); pit.scale.set(0.55,1,1.1); head.add(pit);
+    for(const s of [-1,1]){
+      const pit=new THREE.Mesh(new THREE.SphereGeometry(R*0.34,8,6),
+        new THREE.MeshStandardMaterial({color:0x1c1512,roughness:1,flatShading:true}));
+      pit.position.set(R*0.80,R*0.10,s*R*0.42); pit.scale.set(0.5,1,1.1);
+      head.add(pit);
+    }
   }
+  head.userData.jaw=jaw;
   return head;
 }
 
@@ -680,160 +746,182 @@ function buildCreature(key){
     color:new THREE.Color(L.c).multiplyScalar(0.62).getHex(),
     roughness:0.9,flatShading:true});
   const legs=[]; let body=null, head=null;
-  const nLegs=L.legCount, half=Math.max(1,Math.floor(nLegs/2));
-  const hipY=L.h-L.body[1]*0.4;
+  const nLegs=L.legCount;
+  const BL=L.body[0], BH=L.body[1], BW=L.body[2];
+  const R=Math.max(0.16, BW*0.30);          // head scale, from the animal's build
+  const hipY=L.h-BH*0.25;
 
+  /* every plan below builds a CONNECTED chain: spine joints linked by bones,
+     a neck that bridges body to head, limbs anchored ON the body surface. */
   switch(sp.loco){
-    case 'undulate': {                       // a serpent: all spine, no legs
-      const segs=segBody(g,hide,L,9,{arch:true});
-      body=segs[Math.floor(segs.length/2)];
-      head=buildHead(L,hide,dark);
-      head.position.set(L.body[0]+0.15, L.h+L.body[1]*0.35, 0);
+    case 'undulate': {                       // a serpent — all spine
+      const pts=[], rad=[];
+      for(let i=0;i<9;i++){ const t=i/8;
+        pts.push(V(BL*1.1 - t*BL*2.4, L.h + Math.sin(t*Math.PI)*BH*0.55, 0));
+        rad.push(BW*(0.30+Math.sin((1-t)*Math.PI*0.9)*0.34)); }
+      const segs=spine(g,hide,pts,rad); body=segs[3];
+      head=buildHead(L,hide,dark,R*1.1);
+      head.position.copy(pts[0]).add(V(R*0.5,0,0));
+      g.add(bone(hide, pts[0], head.position, rad[0], R*0.75));
       g.add(head); break;
     }
     case 'multipede': {                      // a long train on many short legs
-      const segs=segBody(g,hide,L,7,{flat:0.8});
-      body=segs[2];
+      const pts=[], rad=[];
+      for(let i=0;i<7;i++){ const t=i/6;
+        pts.push(V(BL - t*BL*2, L.h, 0));
+        rad.push(BW*(0.42-Math.abs(t-0.35)*0.18)); }
+      const segs=spine(g,hide,pts,rad); body=segs[2];
       for(let i=0;i<Math.max(6,nLegs);i++){
         const t=i/Math.max(5,nLegs-1), row=i%2?1:-1;
-        legs.push(limb(g,dark, L.body[0]-t*L.body[0]*2, hipY,
-                       row*L.body[2]*0.55, L.legs*0.8, 0.055, row*0.35));
+        const px=BL-t*BL*2, r=BW*0.38;
+        const lg=makeLimb(dark, L.legs*0.85, 0.055, 0.5);
+        lg.position.set(px, hipY, row*r); lg.rotation.z=row*0.35;
+        g.add(lg); legs.push(lg);
       }
-      head=buildHead(L,hide,dark);
-      head.position.set(L.body[0]+0.2, L.h+0.06, 0); g.add(head); break;
+      head=buildHead(L,hide,dark,R*0.95);
+      head.position.copy(pts[0]).add(V(R*0.6,R*0.1,0));
+      g.add(bone(hide, pts[0], head.position, rad[0], R*0.7));
+      g.add(head); break;
     }
-    case 'roller': {                         // a wheel — a VEHICLE reference frame
-      const r=L.body[2]*1.15;
-      const wheel=new THREE.Mesh(new THREE.CylinderGeometry(r,r,L.body[0]*0.9,9),hide);
-      wheel.rotation.x=Math.PI/2; wheel.position.y=r; g.add(wheel); body=wheel;
-      const hub=new THREE.Mesh(new THREE.IcosahedronGeometry(r*0.45,0),dark);
-      hub.position.y=r; g.add(hub);
-      for(let i=0;i<7;i++){                  // treads
-        const a=i/7*Math.PI*2;
-        const t=new THREE.Mesh(new THREE.BoxGeometry(L.body[0]*0.95,r*0.20,r*0.22),dark);
-        t.position.set(0,r+Math.sin(a)*r,Math.cos(a)*r); t.rotation.x=-a; g.add(t);
+    case 'roller': {                         // a wheel — a VEHICLE frame
+      const rr=BW*1.05;
+      const wheel=new THREE.Mesh(new THREE.CylinderGeometry(rr,rr,BL*0.85,10),hide);
+      wheel.rotation.x=Math.PI/2; wheel.position.y=rr; g.add(wheel); body=wheel;
+      const hub=new THREE.Mesh(new THREE.IcosahedronGeometry(rr*0.5,1),dark);
+      hub.position.y=rr; g.add(hub);
+      for(let i=0;i<9;i++){                  // treads, meeting the rim
+        const a=i/9*Math.PI*2;
+        const tr=new THREE.Mesh(new THREE.BoxGeometry(BL*0.9,rr*0.22,rr*0.26),dark);
+        tr.position.set(0,rr+Math.sin(a)*rr,Math.cos(a)*rr); tr.rotation.x=-a; g.add(tr);
       }
-      head=buildHead(L,hide,dark); head.scale.setScalar(0.65);
-      head.position.set(0, r*1.9, 0); g.add(head); break;
+      /* the head is on a real neck that reaches the hub */
+      head=buildHead(L,hide,dark,R*0.85);
+      head.position.set(rr*0.5, rr*2.0, 0);
+      g.add(bone(hide, V(0,rr*0.9,0), head.position, rr*0.34, R*0.7));
+      g.add(joint(hide, V(0,rr*0.9,0), rr*0.34));
+      g.add(head); break;
     }
-    case 'skimmer': {                        // a manta — a SHIP reference frame
-      const disc=new THREE.Mesh(new THREE.IcosahedronGeometry(L.body[2]*0.95,1),hide);
-      disc.scale.set(1.5,0.30,1.25); disc.position.y=L.h; g.add(disc); body=disc;
-      for(const s of [-1,1]){
-        const fin=new THREE.Mesh(new THREE.ConeGeometry(L.body[2]*0.55,L.body[0]*1.5,3),hide);
-        fin.rotation.set(Math.PI/2,0,s*0.5);
-        fin.position.set(-L.body[0]*0.2, L.h, s*L.body[2]*0.95); g.add(fin);
+    case 'skimmer': {                        // a manta — a SHIP frame
+      const disc=new THREE.Mesh(new THREE.IcosahedronGeometry(BW*0.95,2),hide);
+      disc.scale.set(1.5,0.28,1.2); disc.position.y=L.h; g.add(disc); body=disc;
+      for(const s of [-1,1]){                // wings joined AT the body
+        const tip=V(-BL*0.15, L.h+BH*0.1, s*BW*1.75);
+        g.add(bone(hide, V(0,L.h,s*BW*0.5), tip, BW*0.55, BW*0.09));
+        const fin=new THREE.Mesh(new THREE.IcosahedronGeometry(BW*0.5,1),hide);
+        fin.scale.set(1.3,0.12,1.0);
+        fin.position.set(-BL*0.05,L.h,s*BW*1.05); g.add(fin);
       }
-      const tail=new THREE.Mesh(new THREE.ConeGeometry(0.10,L.body[0]*1.3,4),dark);
-      tail.rotation.z=Math.PI/2; tail.position.set(-L.body[0]*1.1,L.h,0); g.add(tail);
-      head=buildHead(L,hide,dark); head.scale.setScalar(0.8);
-      head.position.set(L.body[0]*0.85, L.h, 0); g.add(head); break;
+      const tail=V(-BL*1.6,L.h+BH*0.2,0);
+      g.add(bone(hide, V(-BL*0.5,L.h,0), tail, BW*0.28, 0.03));
+      head=buildHead(L,hide,dark,R*0.9);
+      head.position.set(BL*0.95, L.h, 0);
+      g.add(bone(hide, V(BL*0.25,L.h,0), head.position, BW*0.5, R*0.75));
+      g.add(head); break;
     }
-    case 'drifter': {                        // gas sac + trailing tendrils — WEATHER
-      const sac=new THREE.Mesh(new THREE.IcosahedronGeometry(L.body[2]*1.1,1),
+    case 'drifter': {                        // gas sac + tendrils — WEATHER
+      const sacY=L.h+BH*1.5, sacR=BW*1.05;
+      const sac=new THREE.Mesh(new THREE.IcosahedronGeometry(sacR,2),
         new THREE.MeshStandardMaterial({color:L.c,roughness:0.35,
-          transparent:true,opacity:0.72,flatShading:true}));
-      sac.scale.set(1,1.25,1); sac.position.y=L.h+L.body[1]*1.4; g.add(sac); body=sac;
-      for(let i=0;i<7;i++){
-        const a=i/7*Math.PI*2, rr=L.body[2]*0.6;
-        const tend=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.012,L.legs*2.2+1.4,4),dark);
-        tend.position.set(Math.sin(a)*rr, L.h-0.4, Math.cos(a)*rr);
-        g.add(tend); legs.push(tend);
+          transparent:true,opacity:0.78,flatShading:true}));
+      sac.scale.set(1,1.2,1); sac.position.y=sacY; g.add(sac); body=sac;
+      /* a real body slung UNDER the sac, connected to it */
+      const bod=V(0,L.h-BH*0.1,0);
+      g.add(bone(hide, V(0,sacY-sacR*0.8,0), bod, sacR*0.35, BW*0.42));
+      g.add(joint(hide, bod, BW*0.45));
+      for(let i=0;i<7;i++){                  // tendrils hanging off the body
+        const a=i/7*Math.PI*2, rr=BW*0.36;
+        const top=V(Math.sin(a)*rr, bod.y-BW*0.2, Math.cos(a)*rr);
+        const tip=V(Math.sin(a)*rr*1.5, bod.y-L.legs*1.6-1.2, Math.cos(a)*rr*1.5);
+        const t=new THREE.Group();
+        t.add(bone(dark, top, tip, 0.045, 0.012));
+        g.add(t); legs.push(t);
       }
-      head=buildHead(L,hide,dark); head.scale.setScalar(0.7);
-      head.position.set(0,L.h+L.body[1]*0.2,0); g.add(head); break;
+      head=buildHead(L,hide,dark,R*0.85);
+      head.position.set(BW*0.55, bod.y+BW*0.1, 0);
+      g.add(bone(hide, bod, head.position, BW*0.42, R*0.7));
+      g.add(head); break;
     }
     case 'brachiate': {                      // hangs from long arms
-      const torso=new THREE.Mesh(new THREE.IcosahedronGeometry(L.body[2]*0.8,1),hide);
-      torso.scale.set(0.9,1.35,0.9); torso.position.y=L.h; g.add(torso); body=torso;
+      const torsoTop=V(0,L.h+BH*0.7,0), torsoBot=V(0,L.h-BH*0.7,0);
+      g.add(bone(hide,torsoTop,torsoBot,BW*0.55,BW*0.42));
+      const t1=joint(hide,torsoTop,BW*0.58); g.add(t1); body=t1;
+      g.add(joint(hide,torsoBot,BW*0.45));
       for(const s of [-1,1]){
-        const arm=limb(g,dark, 0, L.h+L.body[1]*0.7, s*L.body[2]*0.6,
-                       L.legs*0.95, 0.075, s*0.55);
-        arm.rotation.x=-0.5; legs.push(arm);
+        const arm=makeLimb(dark, L.legs*1.05, 0.075, -0.5);
+        arm.position.set(0, torsoTop.y, s*BW*0.5);
+        arm.rotation.z=s*0.5; arm.rotation.x=-0.4; g.add(arm); legs.push(arm);
       }
-      legs.push(limb(g,dark, 0, L.h-L.body[1]*0.6, 0, L.legs*0.45, 0.06, 0));
-      head=buildHead(L,hide,dark);
-      head.position.set(L.body[2]*0.5, L.h+L.body[1]*0.95, 0); g.add(head); break;
+      for(const s of [-1,1]){
+        const leg=makeLimb(dark, L.legs*0.5, 0.06, 0.4);
+        leg.position.set(0, torsoBot.y, s*BW*0.3); g.add(leg); legs.push(leg);
+      }
+      head=buildHead(L,hide,dark,R);
+      head.position.set(BW*0.55, torsoTop.y+BW*0.45, 0);
+      g.add(bone(hide, torsoTop, head.position, BW*0.4, R*0.8));
+      g.add(head); break;
     }
-    case 'burrower': {                       // a low wedge with digging claws
-      const wedge=new THREE.Mesh(new THREE.ConeGeometry(L.body[2]*0.9,L.body[0]*2,5),hide);
-      wedge.rotation.z=-Math.PI/2; wedge.scale.set(1,1,0.55);
-      wedge.position.y=L.h; g.add(wedge); body=wedge;
+    case 'burrower': {                       // low wedge with digging claws
+      const pts=[V(BL*0.9,L.h,0), V(0,L.h+BH*0.15,0), V(-BL*0.9,L.h,0)];
+      const rad=[BW*0.42, BW*0.72, BW*0.36];
+      const segs=spine(g,hide,pts,rad); body=segs[1];
       for(let i=0;i<Math.max(6,nLegs);i++){
         const t=i/Math.max(5,nLegs-1), row=i%2?1:-1;
-        legs.push(limb(g,dark, L.body[0]*0.7-t*L.body[0]*1.4, hipY,
-                       row*L.body[2]*0.7, L.legs*0.9, 0.07, row*0.7));
+        const lg=makeLimb(dark, L.legs*0.85, 0.07, 0.6);
+        lg.position.set(BL*0.7-t*BL*1.4, hipY, row*BW*0.62);
+        lg.rotation.z=row*0.7; g.add(lg); legs.push(lg);
       }
-      for(const s of [-1,1]){
-        const claw=new THREE.Mesh(new THREE.ConeGeometry(0.13,0.65,4),dark);
-        claw.rotation.set(0,0,-Math.PI/2+s*0.4);
-        claw.position.set(L.body[0]*1.05,L.h-0.1,s*0.28); g.add(claw);
+      head=buildHead(L,hide,dark,R*0.95);
+      head.position.set(BL*1.5, L.h-BH*0.05, 0);
+      g.add(bone(hide, pts[0], head.position, rad[0], R*0.8));
+      g.add(head);
+      for(const s of [-1,1]){                // claws, attached at the jaw line
+        const base=V(BL*1.5,L.h-BH*0.2,s*R*0.5), tip=V(BL*2.2,L.h-BH*0.45,s*R*0.7);
+        g.add(bone(dark, base, tip, 0.10, 0.02));
       }
-      head=buildHead(L,hide,dark); head.scale.setScalar(0.8);
-      head.position.set(L.body[0]*0.95,L.h+0.05,0); g.add(head); break;
+      break;
     }
-    case 'anchor': {                         // squat, heavy, ARCHITECTURE
-      const shell=new THREE.Mesh(new THREE.IcosahedronGeometry(L.body[2]*0.95,1),hide);
-      shell.scale.set(1.25,0.95,1.15); shell.position.y=L.h; g.add(shell); body=shell;
-      for(let i=0;i<6;i++){                  // plated carapace
-        const a=i/6*Math.PI*2;
-        const p=new THREE.Mesh(new THREE.BoxGeometry(L.body[0]*0.5,0.12,L.body[2]*0.5),hide);
-        p.position.set(Math.sin(a)*L.body[0]*0.35, L.h+L.body[1]*0.75,
-                       Math.cos(a)*L.body[2]*0.35);
-        p.rotation.set(0.3,a,0); g.add(p);
+    case 'anchor': {                         // squat, heavy — ARCHITECTURE
+      const shell=new THREE.Mesh(new THREE.IcosahedronGeometry(BW*0.95,2),hide);
+      shell.scale.set(1.3,0.95,1.15); shell.position.y=L.h; g.add(shell); body=shell;
+      for(let i=0;i<7;i++){                  // plates ON the shell, not floating
+        const a=i/7*Math.PI*2;
+        const p=new THREE.Mesh(new THREE.IcosahedronGeometry(BW*0.30,0),hide);
+        p.position.set(Math.sin(a)*BL*0.42, L.h+BH*0.62, Math.cos(a)*BW*0.42);
+        p.scale.set(1.5,0.45,1.2); p.rotation.set(0.25,a,0); g.add(p);
       }
-      for(let i=0;i<4;i++)
-        legs.push(limb(g,dark, (i<2?1:-1)*L.body[0]*0.55, hipY,
-                       (i%2?1:-1)*L.body[2]*0.62, L.legs, 0.12, 0));
-      head=buildHead(L,hide,dark);
-      head.position.set(L.body[0]*0.8, L.h+L.body[1]*0.3, 0); g.add(head); break;
+      for(let i=0;i<4;i++){
+        const lg=makeLimb(dark, L.legs, 0.12, 0.35);
+        lg.position.set((i<2?1:-1)*BL*0.52, hipY, (i%2?1:-1)*BW*0.6);
+        g.add(lg); legs.push(lg);
+      }
+      head=buildHead(L,hide,dark,R*1.05);
+      head.position.set(BL*1.05, L.h+BH*0.25, 0);
+      g.add(bone(hide, V(BL*0.4,L.h+BH*0.2,0), head.position, BW*0.5, R*0.85));
+      g.add(head); break;
     }
-    default: {                               // stilt-walker: the tall, leggy default
-      const torso=new THREE.Mesh(new THREE.IcosahedronGeometry(0.8,1),hide);
-      torso.scale.set(L.body[0],L.body[1],L.body[2]);
-      torso.position.y=L.h; g.add(torso); body=torso;
-      const neck=new THREE.Mesh(new THREE.CylinderGeometry(0.10,0.18,L.neck+0.5,5),hide);
-      neck.position.set(L.body[0]*0.62,L.h+(L.neck+0.5)*0.34,0);
-      neck.rotation.z=-0.62; g.add(neck);
-      for(let i=0;i<4;i++)
-        legs.push(limb(g,dark, (i<2?1:-1)*L.body[0]*0.5, hipY,
-                       (i%2?1:-1)*L.body[2]*0.5, L.legs, 0.085, 0));
-      head=buildHead(L,hide,dark);
-      head.position.set(L.body[0]*0.62+L.neck*0.55, L.h+L.neck*0.75, 0); g.add(head);
-    }
-  }
-
-  /* the MECHANISM shows on the skin — strange biology you can see at range */
-  if(sp.mech==='colonial' || sp.mech==='symbiont'){
-    for(let i=0;i<9;i++){
-      const n=new THREE.Mesh(new THREE.IcosahedronGeometry(0.10+Math.random()*0.09,0),dark);
-      n.position.set((Math.random()-0.5)*L.body[0]*1.6, L.h+(Math.random()-0.3)*L.body[1]*1.6,
-                     (Math.random()-0.5)*L.body[2]*1.4);
-      g.add(n);
-    }
-  }
-  if(sp.mech==='lithic' || L.armour>0){
-    for(let i=0;i<5;i++){
-      const p=new THREE.Mesh(new THREE.IcosahedronGeometry(0.22,0),hide);
-      p.position.set((Math.random()-0.5)*L.body[0]*1.3, L.h+L.body[1]*(0.5+Math.random()*0.5),
-                     (Math.random()-0.5)*L.body[2]);
-      p.scale.set(1.4,0.4,1.2); p.rotation.y=Math.random()*3; g.add(p);
+    default: {                               // stilt-walker — the leggy default
+      const rump=V(-BL*0.75,L.h,0), withers=V(BL*0.62,L.h+BH*0.18,0);
+      g.add(bone(hide, rump, withers, BW*0.60, BW*0.68));
+      g.add(joint(hide, rump, BW*0.60));
+      const w=joint(hide, withers, BW*0.66); g.add(w); body=w;
+      /* NECK: a real chain from withers to skull, so the head is attached */
+      const neckTop=V(BL*0.62+L.neck*0.62, L.h+BH*0.18+L.neck*0.95, 0);
+      const neckMid=V(BL*0.62+L.neck*0.34, L.h+BH*0.18+L.neck*0.52, 0);
+      g.add(bone(hide, withers, neckMid, BW*0.34, BW*0.24));
+      g.add(joint(hide, neckMid, BW*0.25));
+      g.add(bone(hide, neckMid, neckTop, BW*0.24, R*0.78));
+      head=buildHead(L,hide,dark,R);
+      head.position.copy(neckTop); g.add(head);
+      for(let i=0;i<4;i++){
+        const front=i<2;
+        const lg=makeLimb(dark, L.legs, 0.085, front?0.45:-0.45);
+        lg.position.set(front?BL*0.5:-BL*0.55, hipY, (i%2?1:-1)*BW*0.48);
+        g.add(lg); legs.push(lg);
+      }
+      /* a tail finishes the silhouette */
+      g.add(bone(hide, rump, V(-BL*1.6,L.h+BH*0.35,0), BW*0.22, 0.03));
     }
   }
-  if(sp.mech==='buoyant' && !L.hover){
-    const s=new THREE.Mesh(new THREE.SphereGeometry(L.body[2]*0.5,7,5),
-      new THREE.MeshStandardMaterial({color:0xb9c4cc,roughness:0.4,
-        transparent:true,opacity:0.5,flatShading:true}));
-    s.position.set(-L.body[0]*0.4, L.h+L.body[1]*1.5, 0); g.add(s);
-  }
-  /* NOTHING HERE TOUCHES THE GROUND */
-  if(L.hover && sp.loco!=='drifter'){
-    const sac=new THREE.Mesh(new THREE.SphereGeometry(L.body[2]*0.62,8,6),
-      new THREE.MeshStandardMaterial({color:0xb9c4cc,roughness:0.4,
-        transparent:true,opacity:0.55,flatShading:true}));
-    sac.position.y=L.h+L.body[1]*1.9; sac.scale.y=0.75; g.add(sac);
-  }
-
   g.userData={legs,head,body:body||g.children[0],look:L};
   return g;
 }
@@ -848,6 +936,22 @@ function setupFauna(){
     scene.add(v); faunaViews.push(v);
   }
 }
+/* Grazing chews, an alerted animal holds its mouth shut, a charging one opens
+   it. Cheap, and it is most of what stops a head reading as a lump. */
+function animateJaw(view, c, t, i){
+  const hd=view.userData.head;
+  const jaw=hd && hd.userData && hd.userData.jaw;
+  if(!jaw) return;
+  let open;
+  if(!c.alive) open=0.55;
+  else if(c.charging) open=0.65;
+  else if(c.state==='GRAZE'||c.state==='DRINK'||c.state==='FEED')
+    open=0.16+Math.abs(Math.sin(t*2.6+i))*0.30;      // chewing
+  else if(c.alertState!=='CALM') open=0.04;          // clamped shut, watching
+  else open=0.06+Math.sin(t*0.7+i)*0.05;             // breathing
+  jaw.rotation.z=-open;
+}
+
 function drawFauna(){
   const t=sim.simSec;
   for(let i=0;i<faunaViews.length;i++){
@@ -862,6 +966,8 @@ function drawFauna(){
     v.rotation.y=c.facing-Math.PI/2;
     v.userData.legs.forEach((Lg,k)=>{
       Lg.rotation.z=Math.sin(t*3.4+k*1.6+i)*(c.speed>0.3?0.40:0.03); });
+    /* the mouth works — a jaw that never moves is just a seam in the model */
+    animateJaw(v, c, t, i);
     /* the same tell the quarry has: sweeping while calm, locked on when not */
     const hd=v.userData.head;
     if(c.alertState==='CALM'){ hd.rotation.y=Math.sin(t*0.6+i)*0.5; }
@@ -1176,6 +1282,7 @@ function drawQuarry(){
   grazer.rotation.y=Q.facing-Math.PI/2;
   if(!Q.alive){ grazer.rotation.z=1.4; return; }
   const t=sim.simSec;
+  animateJaw(grazer, Q, t, 0);
   grazer.userData.body.position.y=GL.h+Math.sin(t*3.1)*0.05*(Q.speed>0.3?1:0.18);
   /* legs swing about local Z — that is the model's fore/aft axis */
   grazer.userData.legs.forEach((L,i)=>{
@@ -1920,6 +2027,7 @@ window.__Q={sim,PROFILES,frames:()=>frames,optic:()=>optic,setOptic,
   post, postOn:(v)=>{ if(v!==undefined){ postOn=!!v&&post.available; setOptic(optic); }
                       return postOn; },
   fauna:()=>sim.fauna, census:()=>sim.census(), faunaViews, sfx,
+  buildCreature, planOf,
   wgen:()=>sim.wgen, law:()=>sim.law, biome:()=>sim.biome,
   universe, openShip, closeShip, renderShip, shipOpen:()=>shipOpen,
   openHall, closeHall, renderHall, hallOpen:()=>hallOpen,
