@@ -669,8 +669,13 @@ export function createSim(seed, profileKey='balanced'){
 
   /* A strike lands. `part` is where it hit — a skull shot ruins the trophy.
      Returns the Reckoning if this killed it, else the wound record. */
-  sim.strike = function({dist, part='body', thrown=true, lethal=true}){
-    const Q=sim.Q, H=sim.hunter, sp=sim.species[Q.species];
+  /* ⚠️ `target` defaults to the player's quarry but ANY creature can be
+     struck. The first version hardcoded sim.Q, so fourteen of the fifteen
+     animals on screen were invulnerable scenery — you could put a spear
+     straight through one and nothing happened. (Kyle found this by playing;
+     no test caught it because every test struck the quarry.) */
+  sim.strike = function({dist, part='body', thrown=true, lethal=true, target=null}){
+    const Q=target||sim.Q, H=sim.hunter, sp=sim.species[Q.species];
     if(!Q.alive){
       /* OVERKILL — going on striking a dead thing. Recorded, and it voids. */
       Q.strikes++;
@@ -691,7 +696,7 @@ export function createSim(seed, profileKey='balanced'){
     const wasCharging = Q.charging || Q.state==='CHARGE';
     Q.alive=false; Q.charging=false;
 
-    const approach = gradeApproach(dist, sim.player.cloaked);
+    const approach = gradeApproach(dist, sim.player.cloaked, Q);
     const run = (H.lastApproach[Q.species]===approach) ? (H.approachRun[Q.species]||0) : 0;
 
     const ctx = {
@@ -703,7 +708,7 @@ export function createSim(seed, profileKey='balanced'){
       quarryInitiated:Q.quarryInitiated, quarryDisengaged:Q.quarryDisengaged,
       cycleObserved: !!(Q.cycleSeen.GRAZE && Q.cycleSeen.DRINK && Q.cycleSeen.BED),
       inBeddingGround: Math.hypot(Q.x-world.zones.bed.x, Q.z-world.zones.bed.z) < 14,
-      doctrine:H.doctrine,
+      doctrine:H.doctrine, species:Q.species,
       integrity: part==='skull' ? INTEGRITY.skull
                : part==='body'  ? INTEGRITY.clean : INTEGRITY.bodyDamage,
       party:1, consecutive:run,
@@ -731,11 +736,14 @@ export function createSim(seed, profileKey='balanced'){
   };
 
   /* Which of the five approaches (§5) did you actually take? Read, not chosen. */
-  function gradeApproach(dist, cloaked){
+  /* reach is the TARGET's, not the quarry's — a blade inside a skimmer's
+     reach is close work even when you came here for something else */
+  function gradeApproach(dist, cloaked, target){
+    const t = target || sim.Q;
     if(cloaked) return 'cloaked';
     if(dist > CHARGE_RANGE*2) return 'standoff';
-    if(dist > sim.species[sim.Q.species].reach) return 'open';
-    return sim.Q.drewBlood ? 'offered' : 'blades';
+    if(dist > sim.species[t.species].reach) return 'open';
+    return t.drewBlood ? 'offered' : 'blades';
   }
   sim.gradeApproach = gradeApproach;
 

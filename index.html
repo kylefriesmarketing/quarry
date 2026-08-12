@@ -200,7 +200,10 @@
   <div class="keys">
     W A S D move &nbsp;&middot;&nbsp; SHIFT slow &nbsp;&middot;&nbsp; CTRL crouch &nbsp;&middot;&nbsp; MOUSE look<br>
     1 / 2 / 3 &nbsp; optics: none &middot; thermal &middot; pheromone<br>
-    F throw spear &nbsp;&middot;&nbsp; E rest &amp; skip to next phase (only when still)<br>
+    <b>LEFT-CLICK or V &mdash; the blade.</b> Get inside its reach; it is worth
+    more than any throw.<br>
+    F throw spear &nbsp;&middot;&nbsp; TAB return to the ship &nbsp;&middot;&nbsp;
+    E rest &amp; skip a phase (only when still)<br>
     C toggle cloak (it will cost you) &nbsp;&middot;&nbsp; ESC release mouse
   </div>
   <div class="go">CLICK TO HUNT</div>
@@ -495,9 +498,12 @@ let grazer=null;
    thing on screen is the thing the silhouette test measured. A hand-written
    lookup table here would quietly decouple the two and the acceptance test
    would be measuring a body nobody ever renders. */
-const MECH_TINT={ colonial:0x7a6a70, puppeteer:0x6a6a5a, compressed:0x8a7a52,
-  chemical:0x6f8a6a, lithic:0x8a8378, buoyant:0x9aa4b0, mimetic:0x77785f,
-  symbiont:0x7d6a58, echoic:0x6b7480, phototropic:0x94854a };
+/* ⚠️ these were ~0x70 grey-browns and every animal read as a black mass at
+   any distance — you could see the shape and nothing else. Lifted well up so
+   the body actually catches light and you can read a head from a haunch. */
+const MECH_TINT={ colonial:0xb894a4, puppeteer:0xa8a68c, compressed:0xd0ad72,
+  chemical:0x8fc08a, lithic:0xc4bcab, buoyant:0xc6d2de, mimetic:0xacae8a,
+  symbiont:0xc09a78, echoic:0x9db0c2, phototropic:0xd4c268 };
 function planOf(key){
   const sp=sim.species[key];
   const L=LOCOMOTION[sp.loco];
@@ -508,59 +514,232 @@ function planOf(key){
     neck: sp.neckLong ? L.bodyH*sp.scale*0.9 : L.bodyH*sp.scale*0.35,
     hover: sp.hover, armour: sp.armour, sp };
 }
-function buildCreature(key){
-  const L=planOf(key);
-  const g=new THREE.Group();
-  const hide=new THREE.MeshStandardMaterial({color:L.c,
-    roughness:L.armour>0?0.55:0.92, metalness:L.armour>0?0.35:0,
-    flatShading:true});
-  const dark=new THREE.MeshStandardMaterial({color:0x3a322a,roughness:0.95,flatShading:true});
-  const body=new THREE.Mesh(new THREE.IcosahedronGeometry(0.8,1),hide);
-  body.scale.set(...L.body); body.position.y=L.h; g.add(body);
-  const neck=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.18,L.neck,5),hide);
-  neck.position.set(L.body[0]*0.62,L.h+L.neck*0.36,0); neck.rotation.z=-0.55; g.add(neck);
+/* ============================================================
+   CREATURE BODIES
+   ⚠️ ONE TEMPLATE IS NOT A BESTIARY. The first pass built every animal the
+   same way — ellipsoid body, stick neck, ball head, tube legs — and varied
+   only its numbers, which is precisely the parts-bin failure §8 exists to
+   avoid ("quadruped that walks like a deer… with a tiny head…"). Kyle's
+   report after playing was simply "the monsters need to look better".
+   Each locomotion type is now BUILT DIFFERENTLY, not scaled differently.
+   ============================================================ */
+function segBody(g, mat, L, segs, opts={}){
+  /* a spine of tapering segments — reads as an ANIMAL, not a balloon */
+  const out=[];
+  const len=L.body[0]*2, step=len/segs;
+  for(let i=0;i<segs;i++){
+    const t=i/(segs-1||1);
+    const taper=(opts.taper!==false) ? (0.55+Math.sin((1-Math.abs(t-0.42)*1.8)*1.4)*0.7) : 1;
+    const r=Math.max(0.09, L.body[2]*0.55*taper*(opts.fat||1));
+    const seg=new THREE.Mesh(new THREE.IcosahedronGeometry(r,0),mat);
+    seg.scale.set(1,(opts.flat||1)*(0.72+taper*0.35),1.05);
+    seg.position.set(len*0.5 - i*step, L.h + (opts.arch? Math.sin(t*Math.PI)*L.body[1]*0.5:0), 0);
+    seg.rotation.y=i*0.7;
+    g.add(seg); out.push(seg);
+  }
+  return out;
+}
+function limb(g, mat, x, y, z, len, thick, splay){
+  const Lg=new THREE.Group();
+  const up=new THREE.Mesh(new THREE.CylinderGeometry(thick,thick*0.72,len,5),mat);
+  up.position.y=-len*0.5; Lg.add(up);
+  const lo=new THREE.Mesh(new THREE.CylinderGeometry(thick*0.7,thick*0.4,len*0.95,5),mat);
+  lo.position.set(0,-len*1.45,len*0.10); lo.rotation.x=-0.22; Lg.add(lo);
+  const foot=new THREE.Mesh(new THREE.ConeGeometry(thick*1.5,thick*2.0,4),mat);
+  foot.rotation.x=Math.PI/2; foot.position.set(0,-len*1.9,len*0.14); Lg.add(foot);
+  Lg.position.set(x,y,z); Lg.rotation.z=splay||0;
+  g.add(Lg); return Lg;
+}
+function buildHead(L, hide, dark){
   const head=new THREE.Group();
-  head.position.set(L.body[0]*0.62+L.neck*0.42, L.h+L.neck*0.68, 0);
-  const skull=new THREE.Mesh(new THREE.IcosahedronGeometry(0.3,1),hide);
-  skull.scale.set(1.3,0.8,0.85); head.add(skull);
+  const skull=new THREE.Mesh(new THREE.IcosahedronGeometry(0.30,1),hide);
+  skull.scale.set(1.45,0.82,0.88); head.add(skull);
+  const jaw=new THREE.Mesh(new THREE.ConeGeometry(0.15,0.42,4),dark);
+  jaw.rotation.z=-Math.PI/2; jaw.position.set(0.34,-0.06,0); head.add(jaw);
   /* ⚠️ ON AN EYELESS WORLD, DO NOT DRAW EYES. The Law has to hold in the
-     geometry or it is a caption — this is the same class of contradiction as
-     a sepia prequel spawning a house cat. */
+     geometry or it is a caption. */
   if(!sim.law.effect.noSight){
     for(const s of [-1,1]){
-      const eye=new THREE.Mesh(new THREE.SphereGeometry(0.09,8,6),eyeMat);
-      eye.position.set(0.09,0.09,s*0.24); head.add(eye);
+      const eye=new THREE.Mesh(new THREE.SphereGeometry(0.085,8,6),eyeMat);
+      eye.position.set(0.10,0.10,s*0.23); head.add(eye);
+      const brow=new THREE.Mesh(new THREE.BoxGeometry(0.20,0.05,0.11),dark);
+      brow.position.set(0.12,0.20,s*0.22); head.add(brow);
     }
   } else {
-    /* something else does the seeing: a sensory pit, and it faces forward */
-    const pit=new THREE.Mesh(new THREE.SphereGeometry(0.13,8,6),
+    const pit=new THREE.Mesh(new THREE.SphereGeometry(0.15,8,6),
       new THREE.MeshStandardMaterial({color:0x241c18,roughness:1,flatShading:true}));
-    pit.position.set(0.22,0.02,0); pit.scale.set(0.6,1,1); head.add(pit);
+    pit.position.set(0.22,0.02,0); pit.scale.set(0.55,1,1.1); head.add(pit);
   }
-  g.add(head);
-  const legs=[];
-  /* leg COUNT comes from the locomotion type — a multipede has eight and a
-     drifter has none, and that is most of what tells them apart at range */
-  const n=L.legCount;
-  for(let i=0;i<n;i++){
-    const Lg=new THREE.Group();
-    const half=Math.floor(n/2), row=i<half?1:-1, idx=i%half;
-    const up=new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.07,L.legs,4),dark);
-    up.position.y=-L.legs*0.5; Lg.add(up);
-    const lo=new THREE.Mesh(new THREE.CylinderGeometry(0.065,0.045,L.legs,4),dark);
-    lo.position.y=-L.legs*1.5; Lg.add(lo);
-    Lg.position.set(L.body[0]*(half>1?(idx/(half-1)-0.5)*0.9:0.42)*2*0.5,
-                    L.h-L.body[1]*0.5, row*L.body[2]*0.45);
-    g.add(Lg); legs.push(Lg);
+  return head;
+}
+
+function buildCreature(key){
+  const L=planOf(key), sp=L.sp;
+  const g=new THREE.Group();
+  const hide=new THREE.MeshStandardMaterial({color:L.c,
+    roughness:L.armour>0?0.42:0.92, metalness:L.armour>0?0.45:0,
+    flatShading:true});
+  /* limbs are a shade of the hide, not near-black — a dark leg against dark
+     ground is a leg you cannot see */
+  const dark=new THREE.MeshStandardMaterial({
+    color:new THREE.Color(L.c).multiplyScalar(0.62).getHex(),
+    roughness:0.9,flatShading:true});
+  const legs=[]; let body=null, head=null;
+  const nLegs=L.legCount, half=Math.max(1,Math.floor(nLegs/2));
+  const hipY=L.h-L.body[1]*0.4;
+
+  switch(sp.loco){
+    case 'undulate': {                       // a serpent: all spine, no legs
+      const segs=segBody(g,hide,L,9,{arch:true});
+      body=segs[Math.floor(segs.length/2)];
+      head=buildHead(L,hide,dark);
+      head.position.set(L.body[0]+0.15, L.h+L.body[1]*0.35, 0);
+      g.add(head); break;
+    }
+    case 'multipede': {                      // a long train on many short legs
+      const segs=segBody(g,hide,L,7,{flat:0.8});
+      body=segs[2];
+      for(let i=0;i<Math.max(6,nLegs);i++){
+        const t=i/Math.max(5,nLegs-1), row=i%2?1:-1;
+        legs.push(limb(g,dark, L.body[0]-t*L.body[0]*2, hipY,
+                       row*L.body[2]*0.55, L.legs*0.8, 0.055, row*0.35));
+      }
+      head=buildHead(L,hide,dark);
+      head.position.set(L.body[0]+0.2, L.h+0.06, 0); g.add(head); break;
+    }
+    case 'roller': {                         // a wheel — a VEHICLE reference frame
+      const r=L.body[2]*1.15;
+      const wheel=new THREE.Mesh(new THREE.CylinderGeometry(r,r,L.body[0]*0.9,9),hide);
+      wheel.rotation.x=Math.PI/2; wheel.position.y=r; g.add(wheel); body=wheel;
+      const hub=new THREE.Mesh(new THREE.IcosahedronGeometry(r*0.45,0),dark);
+      hub.position.y=r; g.add(hub);
+      for(let i=0;i<7;i++){                  // treads
+        const a=i/7*Math.PI*2;
+        const t=new THREE.Mesh(new THREE.BoxGeometry(L.body[0]*0.95,r*0.20,r*0.22),dark);
+        t.position.set(0,r+Math.sin(a)*r,Math.cos(a)*r); t.rotation.x=-a; g.add(t);
+      }
+      head=buildHead(L,hide,dark); head.scale.setScalar(0.65);
+      head.position.set(0, r*1.9, 0); g.add(head); break;
+    }
+    case 'skimmer': {                        // a manta — a SHIP reference frame
+      const disc=new THREE.Mesh(new THREE.IcosahedronGeometry(L.body[2]*0.95,1),hide);
+      disc.scale.set(1.5,0.30,1.25); disc.position.y=L.h; g.add(disc); body=disc;
+      for(const s of [-1,1]){
+        const fin=new THREE.Mesh(new THREE.ConeGeometry(L.body[2]*0.55,L.body[0]*1.5,3),hide);
+        fin.rotation.set(Math.PI/2,0,s*0.5);
+        fin.position.set(-L.body[0]*0.2, L.h, s*L.body[2]*0.95); g.add(fin);
+      }
+      const tail=new THREE.Mesh(new THREE.ConeGeometry(0.10,L.body[0]*1.3,4),dark);
+      tail.rotation.z=Math.PI/2; tail.position.set(-L.body[0]*1.1,L.h,0); g.add(tail);
+      head=buildHead(L,hide,dark); head.scale.setScalar(0.8);
+      head.position.set(L.body[0]*0.85, L.h, 0); g.add(head); break;
+    }
+    case 'drifter': {                        // gas sac + trailing tendrils — WEATHER
+      const sac=new THREE.Mesh(new THREE.IcosahedronGeometry(L.body[2]*1.1,1),
+        new THREE.MeshStandardMaterial({color:L.c,roughness:0.35,
+          transparent:true,opacity:0.72,flatShading:true}));
+      sac.scale.set(1,1.25,1); sac.position.y=L.h+L.body[1]*1.4; g.add(sac); body=sac;
+      for(let i=0;i<7;i++){
+        const a=i/7*Math.PI*2, rr=L.body[2]*0.6;
+        const tend=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.012,L.legs*2.2+1.4,4),dark);
+        tend.position.set(Math.sin(a)*rr, L.h-0.4, Math.cos(a)*rr);
+        g.add(tend); legs.push(tend);
+      }
+      head=buildHead(L,hide,dark); head.scale.setScalar(0.7);
+      head.position.set(0,L.h+L.body[1]*0.2,0); g.add(head); break;
+    }
+    case 'brachiate': {                      // hangs from long arms
+      const torso=new THREE.Mesh(new THREE.IcosahedronGeometry(L.body[2]*0.8,1),hide);
+      torso.scale.set(0.9,1.35,0.9); torso.position.y=L.h; g.add(torso); body=torso;
+      for(const s of [-1,1]){
+        const arm=limb(g,dark, 0, L.h+L.body[1]*0.7, s*L.body[2]*0.6,
+                       L.legs*0.95, 0.075, s*0.55);
+        arm.rotation.x=-0.5; legs.push(arm);
+      }
+      legs.push(limb(g,dark, 0, L.h-L.body[1]*0.6, 0, L.legs*0.45, 0.06, 0));
+      head=buildHead(L,hide,dark);
+      head.position.set(L.body[2]*0.5, L.h+L.body[1]*0.95, 0); g.add(head); break;
+    }
+    case 'burrower': {                       // a low wedge with digging claws
+      const wedge=new THREE.Mesh(new THREE.ConeGeometry(L.body[2]*0.9,L.body[0]*2,5),hide);
+      wedge.rotation.z=-Math.PI/2; wedge.scale.set(1,1,0.55);
+      wedge.position.y=L.h; g.add(wedge); body=wedge;
+      for(let i=0;i<Math.max(6,nLegs);i++){
+        const t=i/Math.max(5,nLegs-1), row=i%2?1:-1;
+        legs.push(limb(g,dark, L.body[0]*0.7-t*L.body[0]*1.4, hipY,
+                       row*L.body[2]*0.7, L.legs*0.9, 0.07, row*0.7));
+      }
+      for(const s of [-1,1]){
+        const claw=new THREE.Mesh(new THREE.ConeGeometry(0.13,0.65,4),dark);
+        claw.rotation.set(0,0,-Math.PI/2+s*0.4);
+        claw.position.set(L.body[0]*1.05,L.h-0.1,s*0.28); g.add(claw);
+      }
+      head=buildHead(L,hide,dark); head.scale.setScalar(0.8);
+      head.position.set(L.body[0]*0.95,L.h+0.05,0); g.add(head); break;
+    }
+    case 'anchor': {                         // squat, heavy, ARCHITECTURE
+      const shell=new THREE.Mesh(new THREE.IcosahedronGeometry(L.body[2]*0.95,1),hide);
+      shell.scale.set(1.25,0.95,1.15); shell.position.y=L.h; g.add(shell); body=shell;
+      for(let i=0;i<6;i++){                  // plated carapace
+        const a=i/6*Math.PI*2;
+        const p=new THREE.Mesh(new THREE.BoxGeometry(L.body[0]*0.5,0.12,L.body[2]*0.5),hide);
+        p.position.set(Math.sin(a)*L.body[0]*0.35, L.h+L.body[1]*0.75,
+                       Math.cos(a)*L.body[2]*0.35);
+        p.rotation.set(0.3,a,0); g.add(p);
+      }
+      for(let i=0;i<4;i++)
+        legs.push(limb(g,dark, (i<2?1:-1)*L.body[0]*0.55, hipY,
+                       (i%2?1:-1)*L.body[2]*0.62, L.legs, 0.12, 0));
+      head=buildHead(L,hide,dark);
+      head.position.set(L.body[0]*0.8, L.h+L.body[1]*0.3, 0); g.add(head); break;
+    }
+    default: {                               // stilt-walker: the tall, leggy default
+      const torso=new THREE.Mesh(new THREE.IcosahedronGeometry(0.8,1),hide);
+      torso.scale.set(L.body[0],L.body[1],L.body[2]);
+      torso.position.y=L.h; g.add(torso); body=torso;
+      const neck=new THREE.Mesh(new THREE.CylinderGeometry(0.10,0.18,L.neck+0.5,5),hide);
+      neck.position.set(L.body[0]*0.62,L.h+(L.neck+0.5)*0.34,0);
+      neck.rotation.z=-0.62; g.add(neck);
+      for(let i=0;i<4;i++)
+        legs.push(limb(g,dark, (i<2?1:-1)*L.body[0]*0.5, hipY,
+                       (i%2?1:-1)*L.body[2]*0.5, L.legs, 0.085, 0));
+      head=buildHead(L,hide,dark);
+      head.position.set(L.body[0]*0.62+L.neck*0.55, L.h+L.neck*0.75, 0); g.add(head);
+    }
   }
-  /* NOTHING HERE TOUCHES THE GROUND — a drifter needs a reason to be up there */
-  if(L.hover){
-    const sac=new THREE.Mesh(new THREE.SphereGeometry(L.body[2]*0.7,8,6),
+
+  /* the MECHANISM shows on the skin — strange biology you can see at range */
+  if(sp.mech==='colonial' || sp.mech==='symbiont'){
+    for(let i=0;i<9;i++){
+      const n=new THREE.Mesh(new THREE.IcosahedronGeometry(0.10+Math.random()*0.09,0),dark);
+      n.position.set((Math.random()-0.5)*L.body[0]*1.6, L.h+(Math.random()-0.3)*L.body[1]*1.6,
+                     (Math.random()-0.5)*L.body[2]*1.4);
+      g.add(n);
+    }
+  }
+  if(sp.mech==='lithic' || L.armour>0){
+    for(let i=0;i<5;i++){
+      const p=new THREE.Mesh(new THREE.IcosahedronGeometry(0.22,0),hide);
+      p.position.set((Math.random()-0.5)*L.body[0]*1.3, L.h+L.body[1]*(0.5+Math.random()*0.5),
+                     (Math.random()-0.5)*L.body[2]);
+      p.scale.set(1.4,0.4,1.2); p.rotation.y=Math.random()*3; g.add(p);
+    }
+  }
+  if(sp.mech==='buoyant' && !L.hover){
+    const s=new THREE.Mesh(new THREE.SphereGeometry(L.body[2]*0.5,7,5),
+      new THREE.MeshStandardMaterial({color:0xb9c4cc,roughness:0.4,
+        transparent:true,opacity:0.5,flatShading:true}));
+    s.position.set(-L.body[0]*0.4, L.h+L.body[1]*1.5, 0); g.add(s);
+  }
+  /* NOTHING HERE TOUCHES THE GROUND */
+  if(L.hover && sp.loco!=='drifter'){
+    const sac=new THREE.Mesh(new THREE.SphereGeometry(L.body[2]*0.62,8,6),
       new THREE.MeshStandardMaterial({color:0xb9c4cc,roughness:0.4,
         transparent:true,opacity:0.55,flatShading:true}));
-    sac.position.y=L.h+L.body[1]*1.5; sac.scale.y=0.75; g.add(sac);
+    sac.position.y=L.h+L.body[1]*1.9; sac.scale.y=0.75; g.add(sac);
   }
-  g.userData={legs,head,body,look:L};
+
+  g.userData={legs,head,body:body||g.children[0],look:L};
   return g;
 }
 const faunaViews=[];
@@ -660,6 +839,28 @@ const spearGeo=new THREE.CylinderGeometry(0.012,0.03,2.0,5); spearGeo.rotateX(-M
 const spearMat=new THREE.MeshStandardMaterial({color:0xb8a074,roughness:0.6,flatShading:true});
 const flying=[];
 
+/* ⚠️ THE BLADE HAS TO BE ON SCREEN. You are a hunter carrying a weapon; if
+   nothing in the frame says so, the player will never guess it exists — which
+   is exactly what happened. It rides on the camera, bottom-right, always. */
+const bladeMesh=new THREE.Group();
+{
+  const steel=new THREE.MeshStandardMaterial({color:0xb9c2cc,roughness:0.32,
+    metalness:0.75,flatShading:true});
+  const grip=new THREE.MeshStandardMaterial({color:0x3a332c,roughness:0.9,flatShading:true});
+  const b1=new THREE.Mesh(new THREE.ConeGeometry(0.055,0.66,4),steel);
+  b1.rotation.x=-Math.PI/2; b1.position.set(0,0,-0.30); bladeMesh.add(b1);
+  const b2=new THREE.Mesh(new THREE.ConeGeometry(0.045,0.52,4),steel);
+  b2.rotation.x=-Math.PI/2; b2.position.set(0.10,-0.03,-0.22); bladeMesh.add(b2);
+  const cuff=new THREE.Mesh(new THREE.CylinderGeometry(0.11,0.13,0.20,6),grip);
+  cuff.rotation.x=Math.PI/2; cuff.position.set(0.045,-0.02,0.08); bladeMesh.add(cuff);
+  /* ⚠️ at 0.28,-0.34,-0.62 it ate the corner of the frame. Out to the edge and
+     scaled down: present enough to tell you it exists, small enough to hunt past. */
+  bladeMesh.scale.setScalar(0.62);
+  bladeMesh.position.set(0.46,-0.40,-0.85);
+  bladeMesh.rotation.set(0.2,-0.7,-0.5);
+  camera.add(bladeMesh); scene.add(camera);
+}
+
 /* ============================================================
    INPUT
    ============================================================ */
@@ -691,6 +892,7 @@ addEventListener('keydown',e=>{ keys[e.code]=true;
   if(e.code==='Digit2')tryOptic(1,'thermal');
   if(e.code==='Digit3')tryOptic(2,'pheromone');
   if(e.code==='KeyF')throwSpear();
+  if(e.code==='KeyV'||e.code==='Space')swingBlade();
   if(e.code==='KeyC'){
     if(!sim.hasKit('cloak')){ flash('THE CLOAK IS GONE. YOU ARE VISIBLE.'); }
     else { sim.player.cloaked=!sim.player.cloaked;
@@ -714,8 +916,12 @@ el('sh-refuel').addEventListener('click',()=>{ universe.refuel(25); commitWorld(
 el('sh-fill').addEventListener('click',()=>{ universe.refuel(FUEL_MAX); commitWorld(); renderShip(); });
 addEventListener('click',()=>{ if(wakeOpen||reckOpen||shipOpen) return;
   if(gate.classList.contains('hide') &&
-  document.pointerLockElement!==renderer.domElement)
-  renderer.domElement.requestPointerLock(); });
+     document.pointerLockElement!==renderer.domElement){
+    renderer.domElement.requestPointerLock(); return; }
+  /* once you are actually in the world, a click is a SWING — the most
+     discoverable place a melee weapon can possibly be */
+  if(document.pointerLockElement===renderer.domElement) swingBlade();
+});
 addEventListener('mousemove',e=>{
   if(document.pointerLockElement!==renderer.domElement) return;
   sim.player.yaw-=e.movementX*0.0022;
@@ -933,8 +1139,46 @@ function drawCover(){
   cover.instanceMatrix.needsUpdate=true;
 }
 
+/* ============================================================
+   THE BLADE
+   ⚠️ `blade` was in the kit list and in the take-pool from the start, so the
+   game told you you had one — and there was no way to use it. It is also the
+   ONLY sane route to CLOSE WORK / THE CONTEST / RITE, which is the entire top
+   half of the score table. Kyle's report: "i could not figure out how to pull
+   out my blade." There was nothing to find.
+   ============================================================ */
+const BLADE_REACH = 3.4, BLADE_CD = 0.55;
+let bladeT=0, bladeSwing=0;
+function swingBlade(){
+  if(!gate.classList.contains('hide')||wakeOpen||reckOpen||shipOpen) return;
+  if(!sim.hasKit('blade')){ flash('THE BLADE IS GONE. IT IS WEARING IT.'); return; }
+  if(bladeT>0) return;
+  bladeT=BLADE_CD; bladeSwing=1;
+  sim.player.noise=Math.max(sim.player.noise,0.35);
+  /* reach out along the way you are looking */
+  const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+  const p=sim.player, eyeY=W.heightAt(p.x,p.z)+(p.crouch?1.05:1.7);
+  let hit=null;
+  for(let step=1; step<=5 && !hit; step++){
+    const t=step/5*BLADE_REACH;
+    hit=creatureHit(p.x+dir.x*t, eyeY+dir.y*t, p.z+dir.z*t);
+  }
+  if(hit) resolveHit(hit, 'body', true);
+  else flash('YOU CUT AIR');
+}
+function updateBlade(dt){
+  if(bladeT>0) bladeT-=dt;
+  if(bladeSwing>0){ bladeSwing=Math.max(0,bladeSwing-dt/0.22);
+    /* the arm crosses the view — you can see that you swung */
+    bladeMesh.visible=true;
+    const f=1-bladeSwing;
+    bladeMesh.position.set(0.46-f*0.72, -0.40+Math.sin(f*Math.PI)*0.22, -0.85+f*0.13);
+    bladeMesh.rotation.set(0.2, -0.7+f*1.6, -0.5+f*1.2);
+  } else bladeMesh.visible = sim.hasKit('blade') && optic===0 && !shipOpen;
+}
+
 function throwSpear(){
-  if(!gate.classList.contains('hide')||wakeOpen||reckOpen) return;
+  if(!gate.classList.contains('hide')||wakeOpen||reckOpen||shipOpen) return;
   if(sim.player.spears<=0){ flash('NO SPEARS'); return; }
   sim.player.spears--;
   const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
@@ -947,31 +1191,61 @@ function throwSpear(){
   flying.push({p:camera.position.clone(),v:dir.multiplyScalar(30).add(new THREE.Vector3(0,1.6,0)),mesh});
   sim.player.noise=Math.max(sim.player.noise,0.55);
 }
+/* ⚠️ HIT DETECTION IS AGAINST EVERY LIVE CREATURE, AND AGAINST ITS REAL BODY.
+   The first version tested only sim.Q against a hardcoded band gy+1.2..3.4:
+   fourteen of fifteen animals were invulnerable, and the band missed
+   low-bodied ones entirely (a skimmer spans -0.08..0.76, wholly beneath it),
+   so a clean hit passed straight through. Bodies are generated now — the
+   hitbox has to be generated with them. */
+function creatureHit(px,py,pz){
+  for(let i=0;i<sim.fauna.length;i++){
+    const c=sim.fauna[i];
+    if(!c.alive||c.gone) continue;
+    const v = i===0 ? grazer : faunaViews[i-1];
+    if(!v||!v.visible) continue;
+    const L=v.userData.look;
+    const gy=W.heightAt(c.x,c.z) + (L.hover?2.2:0.3);
+    const halfW = Math.max(1.0, L.body[0]*0.62);
+    const lo = gy - 0.2, hi = gy + L.h + L.body[1] + 0.5;
+    if(Math.hypot(px-c.x,pz-c.z) < halfW && py > lo && py < hi)
+      return { c, i, headY: gy + L.h + L.body[1]*0.6 };
+  }
+  return null;
+}
+
+/* the ONE place a hit becomes a Reckoning, for spear and blade alike */
+function resolveHit(hit, part, thrown){
+  const c=hit.c;
+  const dist=Math.hypot(sim.player.x-c.x, sim.player.z-c.z);
+  const rec=sim.strike({dist, part, thrown, target:c});
+  if(rec.overkill){
+    flash('YOU STRIKE A DEAD THING — THE TROPHY IS VOID');
+    showReckoning(sim.hunter.trophies[sim.hunter.trophies.length-1]);
+    return rec;
+  }
+  /* THE NEMESIS HUNT, PAID OFF: kill the thing wearing your gear and you
+     take it back off the carcass. */
+  if(c.carrying){ const k=c.carrying; sim.hunter.kit[k]=true; c.carrying=null;
+    flash('YOU CUT YOUR '+kitOwn(k)+' BACK OFF IT'); }
+  showReckoning(rec);
+  return rec;
+}
+
 function updateSpears(dt){
-  const Q=sim.Q;
   for(let i=flying.length-1;i>=0;i--){
     const s=flying[i];
     s.v.y-=13*dt; s.p.addScaledVector(s.v,dt);
     s.mesh.position.copy(s.p); s.mesh.lookAt(_v.copy(s.p).add(s.v));
-    const gy=W.heightAt(Q.x,Q.z);
-    if(!Q.gone&&Math.hypot(s.p.x-Q.x,s.p.z-Q.z)<1.5&&s.p.y>gy+1.2&&s.p.y<gy+3.4){
+    const hit=creatureHit(s.p.x,s.p.y,s.p.z);
+    if(hit){
       /* WHERE it hit decides the trophy — a skull shot ruins it (§3). There
          are no health bars; you read the body. */
-      const part = s.p.y > gy+3.0 ? 'skull' : 'body';
-      const dist = Math.hypot(sim.player.x-Q.x, sim.player.z-Q.z);
-      const rec  = sim.strike({dist, part, thrown:true});
+      const part = s.p.y > hit.headY ? 'skull' : 'body';
       s.mesh.visible=false; flying.splice(i,1);
-      if(rec.overkill){ flash('YOU STRIKE A DEAD THING — THE TROPHY IS VOID');
-                        showReckoning(sim.hunter.trophies[sim.hunter.trophies.length-1]); }
-      else {
-        /* THE NEMESIS HUNT, PAID OFF: kill the thing wearing your gear and
-           you take it back off the carcass. */
-        if(Q.carrying){ const k=Q.carrying; sim.hunter.kit[k]=true; Q.carrying=null;
-          flash('YOU CUT YOUR '+kitOwn(k)+' BACK OFF IT'); }
-        showReckoning(rec);
-      }
+      resolveHit(hit, part, true);
       continue;
     }
+    const Q=sim.Q;
     const h=W.heightAt(s.p.x,s.p.z);
     if(s.p.y<=h){ s.p.y=h; s.mesh.position.copy(s.p); flying.splice(i,1);
       if(Math.hypot(s.p.x-Q.x,s.p.z-Q.z)<28) Q.awareness=Math.min(1,Q.awareness+0.5); }
@@ -1359,7 +1633,7 @@ function stepFrame(dt, withInput){
         :sim.Q.lastChannel==='SCENT'?'CAUGHT YOUR SCENT':'HEARD YOU'));
   }
   drawQuarry(); drawFauna(); drawCarrion(); updateCalls(dt);
-  drawTracks(); drawPuffs(dt); drawCover(); updateSpears(dt);
+  drawTracks(); drawPuffs(dt); drawCover(); updateSpears(dt); updateBlade(dt);
   updateWound(dt);
   if(optic===0) applySky();
   updateHUD(dt);
