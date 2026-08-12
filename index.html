@@ -1040,6 +1040,64 @@ function drawClan(){
     m.material.depthWrite=!cl; });
 }
 
+/* ============================================================
+   COLONISTS (M11)
+   ⚠️ THEY MUST READ AS PEOPLE, AND THE THREE KINDS MUST BE TELLABLE APART AT
+   RANGE — that is the whole skill the prohibition demands. Armed carry a
+   long rifle and a pack; unarmed are empty-handed; children are small. If a
+   player cannot tell them apart before committing, voiding a trophy on a
+   child is the game's fault, not theirs.
+   ============================================================ */
+const colonistViews=[];
+function buildColonist(kind){
+  const g=new THREE.Group();
+  const K = kind==='young' ? 0.62 : 1.0;              // children are SMALL
+  const cloth=new THREE.MeshStandardMaterial({
+    color: kind==='armed'?0x6b6f5a : kind==='young'?0xb9805c : 0x9a7f66,
+    roughness:0.95,flatShading:true});
+  const skin=new THREE.MeshStandardMaterial({color:0xb08a68,roughness:0.9,
+    flatShading:true});
+  const steel=new THREE.MeshStandardMaterial({color:0x2e3134,roughness:0.5,
+    metalness:0.6,flatShading:true});
+  const H=1.85*K;
+  const hip=V(0,H*0.48,0), chest=V(0,H*0.78,0), neck=V(0,H*0.86,0);
+  g.add(bone(cloth,hip,chest,0.17*K,0.21*K));
+  g.add(joint(cloth,chest,0.20*K)); g.add(joint(cloth,hip,0.16*K));
+  for(const s of [-1,1]){
+    const lg=makeLimb(cloth,H*0.48,0.070*K,0.3);
+    lg.position.set(0,hip.y,s*0.10*K); g.add(lg);
+    const arm=makeLimb(cloth,H*0.32,0.050*K,-0.2);
+    arm.position.set(0,chest.y,s*0.21*K); arm.rotation.z=s*0.28; g.add(arm);
+  }
+  g.add(bone(skin,chest,neck,0.075*K,0.065*K));
+  const head=new THREE.Mesh(new THREE.IcosahedronGeometry(0.135*K,1),skin);
+  head.position.copy(neck).add(V(0,0.13*K,0)); g.add(head);
+  /* ⚠️ THE TELL. A rifle held across the body, visible from any angle. */
+  if(kind==='armed'){
+    const rifle=new THREE.Mesh(new THREE.BoxGeometry(0.055,0.055,1.15),steel);
+    rifle.position.set(0.22,chest.y-0.10,0.05); rifle.rotation.y=0.30;
+    g.add(rifle);
+    const pack=new THREE.Mesh(new THREE.IcosahedronGeometry(0.20,0),steel);
+    pack.position.set(-0.18,chest.y,0); pack.scale.set(0.7,1,0.9); g.add(pack);
+  }
+  g.userData={kind,K};
+  return g;
+}
+function drawColonists(){
+  const C=sim.colony; if(!C) return;
+  while(colonistViews.length < C.people.length){
+    const v=buildColonist(C.people[colonistViews.length].kind);
+    scene.add(v); colonistViews.push(v);
+  }
+  for(let i=0;i<C.people.length;i++){
+    const q=C.people[i], v=colonistViews[i];
+    v.visible=q.alive;
+    if(!q.alive) continue;
+    v.position.set(q.x, W.heightAt(q.x,q.z), q.z);
+    v.rotation.y=q.facing;
+  }
+}
+
 /* carrion — a kill you did not make, and the reason the scavengers came */
 const carrionGeo=new THREE.IcosahedronGeometry(0.62,0);
 const carrionMat=new THREE.MeshStandardMaterial({color:0x5a4038,roughness:1,
@@ -1429,12 +1487,15 @@ function swingBlade(){
   /* reach out along the way you are looking */
   const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
   const p=sim.player, eyeY=W.heightAt(p.x,p.z)+(p.crouch?1.05:1.7);
-  let hit=null, ch=null;
-  for(let step=1; step<=5 && !hit && !ch; step++){
+  let hit=null, ch=null, co=null;
+  for(let step=1; step<=5 && !hit && !ch && !co; step++){
     const t=step/5*BLADE_REACH;
     ch=clanHit(p.x+dir.x*t, eyeY+dir.y*t, p.z+dir.z*t);
-    if(!ch) hit=creatureHit(p.x+dir.x*t, eyeY+dir.y*t, p.z+dir.z*t);
+    if(!ch) co=colonistHit(p.x+dir.x*t, eyeY+dir.y*t, p.z+dir.z*t);
+    if(!ch && !co) hit=creatureHit(p.x+dir.x*t, eyeY+dir.y*t, p.z+dir.z*t);
   }
+  if(co){ const d=Math.hypot(p.x-co.x,p.z-co.z);
+    showReckoning(sim.strikeColonist({target:co, dist:d, part:'body'})); return; }
   /* ⚠️ taking a clan hunter with the BLADE is the redemption the fiction
      wants — a dangerous assignment no hunter in good standing would take. */
   if(ch){ const d=Math.hypot(p.x-ch.x,p.z-ch.z);
@@ -1489,6 +1550,18 @@ function maybeSendHunter(dt){
     flash('SOMETHING IS ON THIS WORLD THAT CAME FOR YOU'); }
 }
 
+/* a colonist takes a hit like anything else — and the code decides what it cost */
+function colonistHit(px,py,pz){
+  const C=sim.colony; if(!C) return null;
+  for(let i=0;i<C.people.length;i++){
+    const q=C.people[i]; if(!q.alive) continue;
+    const gy=W.heightAt(q.x,q.z), K=q.kind==='young'?0.62:1.0;
+    if(Math.hypot(px-q.x,pz-q.z) < 0.9 && py > gy && py < gy+1.95*K)
+      return q;
+  }
+  return null;
+}
+
 /* the clan hunter takes a hit like anything else — but scores like nothing else */
 function clanHit(px,py,pz){
   const C=sim.clan;
@@ -1537,6 +1610,14 @@ function updateSpears(dt){
     const s=flying[i];
     s.v.y-=13*dt; s.p.addScaledVector(s.v,dt);
     s.mesh.position.copy(s.p); s.mesh.lookAt(_v.copy(s.p).add(s.v));
+    const co=colonistHit(s.p.x,s.p.y,s.p.z);
+    if(co){
+      s.mesh.visible=false; flying.splice(i,1);
+      const d=Math.hypot(sim.player.x-co.x, sim.player.z-co.z);
+      showReckoning(sim.strikeColonist({target:co, dist:d,
+        part:s.p.y>W.heightAt(co.x,co.z)+1.55?'skull':'body'}));
+      continue;
+    }
     const ch=clanHit(s.p.x,s.p.y,s.p.z);
     if(ch){
       s.mesh.visible=false; flying.splice(i,1);
@@ -2040,7 +2121,17 @@ function updateHUD(dt){
     (fl.key!=='good'?'<div style="color:#d97a4a;margin-top:3px">'+fl.label+'</div>':'')+
     (sim.clan&&sim.clan.alive
       ? '<div style="color:#e05a4a">'+(sim.clan.cloaked?'SOMETHING IS OUT THERE'
-        :'IT HAS DROPPED ITS CLOAK')+'</div>' : '');
+        :'IT HAS DROPPED ITS CLOAK')+'</div>' : '')+
+    /* ⚠️ BEING WATCHED MUST BE VISIBLE, or the void is a trap rather than a
+       rule. It counts up so you can see the grace running out, and it tells
+       you the only fix: break contact. You cannot kill your way out of it. */
+    (sim.witnessT>0.3 && !sim.hunter.witnessed
+      ? '<div style="color:#d9b24a">YOU ARE BEING WATCHED &nbsp;'+
+        Math.max(0,(6-sim.witnessT)).toFixed(1)+'s</div>' : '')+
+    (sim.hunter.witnessed
+      ? '<div style="color:#e05a4a">WITNESSED — BREAK CONTACT</div>' : '')+
+    (sim.colony && sim.colony.alarm>0
+      ? '<div style="color:#d97a4a">'+sim.colony.name.toUpperCase()+' IS ROUSED</div>' : '');
 
   if(mods.bleeding) k+='<div class="bleed">BLEEDING</div>';
   if(Q.drewBlood && Q.alive)
@@ -2086,7 +2177,8 @@ function stepFrame(dt, withInput){
       :'IT KNOWS — IT '+(sim.Q.lastChannel==='SIGHT'?'SAW YOU'
         :sim.Q.lastChannel==='SCENT'?'CAUGHT YOUR SCENT':'HEARD YOU'));
   }
-  drawQuarry(); drawFauna(); drawClan(); drawCarrion(); updateCalls(dt);
+  drawQuarry(); drawFauna(); drawClan(); drawColonists();
+  drawCarrion(); updateCalls(dt);
   maybeSendHunter(dt);
   drawTracks(); drawPuffs(dt); drawCover(); updateSpears(dt); updateBlade(dt);
   updateWound(dt);
@@ -2151,6 +2243,7 @@ window.__Q={sim,PROFILES,frames:()=>frames,optic:()=>optic,setOptic,
   openMarket, closeMarket, renderMarket, mktOpen:()=>mktOpen,
   merchantHere:()=>merchantFor(SEED),
   clan:()=>sim.clan, sendHunter:()=>sim.spawnClanHunter(),
+  colony:()=>sim.colony, colonistViews, buildColonist,
   fall:()=>fallOf(sim.hunter.disgrace||0),
   commitWorld, seed:SEED,
   assess:()=>sim.assess(optic), reckoning:()=>sim.lastReckoning,
