@@ -176,6 +176,69 @@ export function rankOf(st){
 export function nextRank(st){ return RANKS.find(k=>k.at > st) || null; }
 
 /* ============================================================
+   M10 — THE FALL
+   ⚠️ BAD BLOOD IS A CHAPTER, NOT A FAIL STATE (§11). Sustained dishonour
+   drifts you toward outcast: merchants close one at a time, the clan charts
+   stop updating, and eventually your own people send someone to collect you —
+   mechanically the hardest and highest-scoring quarry in the game. And there
+   is always a way back.
+
+   ⚠️ DISGRACE IS NOT "LOW STANDING". A hunter taking small honest quarry has
+   low standing and clean hands. What damns you is METHOD: voids, butchery,
+   killing what could never reach you. A Contest or a Rite washes it off.
+   ============================================================ */
+export const DISGRACE_WINDOW = 20;
+export const DISGRACE_WEIGHTS = {
+  void:      1.00,   // a gravid kill, an overkill, a doctrine broken
+  butchery:  0.55,   // it never knew you were there
+  culling:   0.16,   // it knew, and could never reach you
+  clean:    -0.10,
+  closework:-0.40,
+  contest:  -0.75,   // it drew your blood and you finished it anyway
+  rite:     -1.00    // the perfect form. Nothing washes off faster.
+};
+/* ⚠️ TAKING ONE OF YOUR OWN IS THE ASSIGNMENT (§11), and it absolves in
+   proportion to HOW you took it — a clan hunter shot from under a cloak
+   barely counts. This is a WEIGHT, not a padding hack: the first version
+   pushed a dozen blank filler trophies onto the shelf to move the average,
+   which polluted the wall of skulls with "— undefined 0" rows. The wall is a
+   record of every answer you gave; nothing fake goes on it. */
+export const CLAN_ABSOLUTION = {
+  rite:-15, contest:-14, closework:-10, clean:-6, culling:-3, butchery:-1
+};
+export function disgrace(trophies){
+  if(!trophies || !trophies.length) return 0;
+  const last = trophies.slice(-DISGRACE_WINDOW);
+  let d = 0;
+  for(const t of last){
+    if(t.clan && !t.voided) d += (CLAN_ABSOLUTION[t.method] ?? -6);
+    else d += t.voided ? DISGRACE_WEIGHTS.void : (DISGRACE_WEIGHTS[t.method] ?? 0);
+  }
+  return Math.max(0, Math.min(1, d / last.length));
+}
+
+export const FALL = [
+  { key:'good',    label:'IN GOOD STANDING', at:0,
+    note:'Your clan has no complaint with you.' },
+  { key:'watched', label:'WATCHED',          at:0.30, closesMerchants:1,
+    note:'Word travels. Some keepers have stopped meeting your eye.' },
+  /* ⚠️ 0.50, not 0.56: pure butchery scores exactly 0.55, and at 0.56 a hunter
+     who had done nothing BUT cloaked kills for twenty trophies sat one
+     hundredth short of Outcast. That is a boundary accident, not a design —
+     sustained dishonour is supposed to drift you out. */
+  { key:'outcast', label:'OUTCAST',          at:0.50, closesMerchants:2, chartsDark:true,
+    note:'The charts have stopped updating. You are hunting blind now.' },
+  { key:'badblood',label:'BAD BLOOD',        at:0.78, closesMerchants:3, chartsDark:true,
+    hunted:true,
+    note:'They have sent someone. Cast out and hunted by your own.' }
+];
+export function fallOf(d){
+  let f = FALL[0];
+  for(const s of FALL) if(d >= s.at) f = s;
+  return f;
+}
+
+/* ============================================================
    M7 — THE DOCTRINES
    Four answers to what makes a kill honorable. Each defines its own RITE
    (see RITES above) and its own PROHIBITION — a hard cap, not a scolding.

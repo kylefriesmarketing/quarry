@@ -8,7 +8,8 @@
    ============================================================ */
 
 import { trophyScore, bountyValue, gradeMethod, INTEGRITY, TIERS,
-         standing, rankOf, RANKS, DOCTRINES } from './scoring.js';
+         standing, rankOf, RANKS, DOCTRINES,
+         disgrace, fallOf } from './scoring.js';
 import { weaponCap } from './market.js';
 export * from './market.js';
 import { generateWorld, nameTheNamed, LAWS, BIOMES, ROLES, LOCOMOTION }
@@ -327,6 +328,8 @@ export function createSim(seed, profileKey='balanced'){
       standing:0, everHadCloak:false,
       /* M8: one primary plus your blades. Swapping means going to the ship. */
       primary:'spears', gear:{}, badBlood:false,
+      /* M10 — THE FALL. `disgrace` is method-driven, not score-driven. */
+      disgrace:0, fall:'good', clanKills:0, redemption:null,
       injuries:{}, breaks:0, scars:0, scarCredit:0, lastBreak:null, taken:[],
       bleed:0,          // seconds of open wound remaining
       bleeds:0,         // how many times you have been opened up
@@ -629,6 +632,8 @@ export function createSim(seed, profileKey='balanced'){
     sim.updateWind(dt);
     const per = sim.updateQuarry(dt);
     sim.updateFauna(dt);          // the rest of the web, watched or not
+    const clanBroke = sim.updateClan(dt);
+    if(clanBroke && per) per.broke = per.broke || clanBroke;
     sim.frame++;
     return per;
   };
@@ -750,6 +755,13 @@ export function createSim(seed, profileKey='balanced'){
     H.standing = standing(H.trophies);
     rec.standingAfter = H.standing;
     rec.rank = rankOf(H.standing);
+    /* M10: the fall, or the climb back out of it */
+    const fellBefore = H.fall;
+    H.disgrace = disgrace(H.trophies);
+    const f = fallOf(H.disgrace);
+    H.fall = f.key; H.badBlood = !!f.hunted;
+    rec.disgrace = H.disgrace; rec.fall = f;
+    if(f.key !== fellBefore) rec.fellTo = f;
     /* THE CLOAK IS EARNED (§10). Granted at ELDER, as recognition — and a
        VOKAAR never gets one, because the hardware is not in their mask. */
     /* ⚠️ compare against the THRESHOLD, not the current rank. A big enough
@@ -896,7 +908,8 @@ export function createSim(seed, profileKey='balanced'){
                doctrine:sim.hunter.doctrine, honor:sim.hunter.honor,
                standing:sim.hunter.standing, everHadCloak:sim.hunter.everHadCloak,
                primary:sim.hunter.primary, gear:{...sim.hunter.gear},
-               badBlood:sim.hunter.badBlood,
+               badBlood:sim.hunter.badBlood, disgrace:sim.hunter.disgrace,
+               fall:sim.hunter.fall, clanKills:sim.hunter.clanKills,
                bounty:sim.hunter.bounty, voids:sim.hunter.voids,
                gaveGround:sim.hunter.gaveGround,
                trophies:JSON.parse(JSON.stringify(sim.hunter.trophies)),
@@ -929,6 +942,9 @@ export function createSim(seed, profileKey='balanced'){
     sim.hunter.primary=s.hunter.primary||'spears';
     sim.hunter.gear={...(s.hunter.gear||{})};
     sim.hunter.badBlood=!!s.hunter.badBlood;
+    sim.hunter.disgrace=s.hunter.disgrace||0;
+    sim.hunter.fall=s.hunter.fall||'good';
+    sim.hunter.clanKills=s.hunter.clanKills||0;
     sim.hunter.honor=s.hunter.honor||0; sim.hunter.bounty=s.hunter.bounty||0;
     sim.hunter.voids=s.hunter.voids||0;
     sim.hunter.gaveGround=!!s.hunter.gaveGround;
@@ -1175,6 +1191,107 @@ export function createSim(seed, profileKey='balanced'){
       if(sim.carrion[i].age > 2600) sim.carrion.splice(i,1);
     recruitT += dt;
     if(recruitT >= RECRUIT_EVERY){ recruitT = 0; sim.recruit(); }
+  };
+
+  /* ============================================================
+     M10 — THE CLAN HUNTER
+     ⚠️ NOT AN ANIMAL. It hunts the way YOU do: it reads your noise and your
+     scent, it closes on cover, it CLOAKS at range and drops the cloak to
+     strike — because a hunter that used the cloak for the kill would be
+     scoring Butchery, and they are here to do this properly.
+     The hardest and highest-scoring quarry in the game (§11).
+     ============================================================ */
+  sim.clan = null;
+  const CLAN = { speed:4.6, sprint:7.4, reach:3.2, strikeCd:2.6,
+                 cloakRange:26, hunt:150, patience:0.55 };
+
+  sim.spawnClanHunter = function(){
+    if(sim.clan) return sim.clan;
+    const rng=world.rng, lim=WORLD_SIZE*0.42;
+    /* they arrive at the edge of your world and walk in */
+    const a=rng()*Math.PI*2;
+    sim.clan = {
+      x:Math.max(-lim,Math.min(lim,Math.sin(a)*lim)),
+      z:Math.max(-lim,Math.min(lim,Math.cos(a)*lim)),
+      facing:a+Math.PI, state:'SEEK', stateT:0, speed:0,
+      alive:true, cloaked:true, strikeT:0, awareness:0,
+      name:'A HUNTER OF YOUR OWN CLAN', struck:0
+    };
+    return sim.clan;
+  };
+  sim.despawnClanHunter = function(){ sim.clan=null; };
+
+  sim.updateClan = function(dt){
+    const C=sim.clan; if(!C || !C.alive) return null;
+    const p=sim.player;
+    C.stateT+=dt; if(C.strikeT>0) C.strikeT-=dt;
+    const d=Math.hypot(C.x-p.x, C.z-p.z);
+
+    /* it reads you on the same channels you read a beast on */
+    const noise=p.noise, scent=sim.scentAt(C.x,C.z);
+    const lead = Math.max(0, 1-d/CLAN.hunt) * (0.35 + noise*0.8 + scent*0.6);
+    C.awareness = Math.min(1, Math.max(0, C.awareness + (lead>0.12? dt*0.45 : -dt*0.12)));
+
+    /* ⚠️ IT DROPS THE CLOAK TO STRIKE. A clan hunter that killed you from
+       under a cloak would be taking Butchery, and it did not come here for
+       that — this is the same code of honour the player is scored against. */
+    C.cloaked = d > CLAN.cloakRange && C.awareness < 0.85;
+
+    let broke=null;
+    if(C.awareness > 0.25){
+      C.state = d < 14 ? 'CLOSE' : 'STALK';
+      const spd = d < 14 ? CLAN.sprint : CLAN.speed;
+      const ax=p.x-C.x, az=p.z-C.z, l=Math.hypot(ax,az)||1;
+      C.x += ax/l*spd*dt; C.z += az/l*spd*dt;
+      C.facing = Math.atan2(ax,az);
+      C.speed = spd;
+      if(d <= CLAN.reach && C.strikeT<=0){
+        C.strikeT = CLAN.strikeCd; C.struck++;
+        broke = sim.hunter.bleed>0 ? sim.breakHunter('clan') : sim.woundHunter('clan');
+      }
+    } else {
+      /* casting for your trail */
+      C.state='SEEK';
+      if(C.stateT>4){ C.stateT=0; C.facing += (world.rng()-0.5)*2.2; }
+      C.x += Math.sin(C.facing)*CLAN.speed*0.55*dt;
+      C.z += Math.cos(C.facing)*CLAN.speed*0.55*dt;
+      C.speed = CLAN.speed*0.55;
+    }
+    const lim=WORLD_SIZE*0.47;
+    C.x=Math.max(-lim,Math.min(lim,C.x)); C.z=Math.max(-lim,Math.min(lim,C.z));
+    return broke;
+  };
+
+  /* Killing one is the fastest way back — and it is worth more than anything
+     else you can put on the wall. */
+  sim.strikeClan = function({dist, part='body'}){
+    const C=sim.clan, H=sim.hunter;
+    if(!C || !C.alive) return {miss:true};
+    C.alive=false;
+    const rec = trophyScore({
+      tier:'legendary', specimenPct:NAMED_PCT,
+      method: sim.player.cloaked ? 'butchery'
+            : dist<=CLAN.reach ? (sim.hunter.bleed>0?'contest':'closework') : 'clean',
+      integrity: part==='skull'?INTEGRITY.skull:INTEGRITY.clean,
+      party:1, consecutive:0, doctrine:H.doctrine, cycleObserved:true, strikes:1
+    });
+    rec.species='A HUNTER OF YOUR OWN CLAN'; rec.clan=true;
+    rec.disgraceBefore = H.disgrace;
+    rec.bounty = 0;                       // nobody buys a clan hunter's body
+    rec.at=sim.simSec; rec.dist=dist; rec.part=part;
+    H.trophies.push(rec);
+    H.honor += rec.score; H.clanKills++;
+    /* ⚠️ REDEMPTION IS REAL AND MECHANICAL — carried by the trophy's own
+       `clan` flag through disgrace(), NOT by padding the shelf with filler.
+       Bad Blood is a chapter, not a fail state. */
+    H.standing = standing(H.trophies);
+    H.disgrace = disgrace(H.trophies);
+    const f=fallOf(H.disgrace); H.fall=f.key; H.badBlood=!!f.hunted;
+    rec.disgrace=H.disgrace; rec.fall=f;
+    rec.redeemed = H.disgrace < (rec.disgraceBefore ?? 1);
+    sim.lastReckoning = rec;
+    sim.clan=null;
+    return rec;
   };
 
   /* a census, so a soak can assert the food web is actually STABLE */

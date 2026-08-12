@@ -391,7 +391,8 @@ import {createSim, makeRNG, PROFILES, WORLD_SIZE, WATER_Y, GRID,
         INJURIES, KIT} from './sim.js';
 import {LOCOMOTION, LAWS, BIOMES} from './worldgen.js';
 import {METHOD, TIERS, bandOf, standing, rankOf, nextRank, RANKS,
-        DOCTRINES, DOCTRINE_KEYS, STANDING_WINDOW} from './scoring.js';
+        DOCTRINES, DOCTRINE_KEYS, STANDING_WINDOW,
+        disgrace, fallOf, FALL} from './scoring.js';
 import {createPost} from './post.js';
 import {createSfx} from './sfx.js';
 import {loadUniverse, packHunter, unpackHunter, jumpCost,
@@ -978,6 +979,67 @@ function drawFauna(){
     }
   }
 }
+/* ============================================================
+   THE CLAN HUNTER (M10) — one of your own, built like you.
+   ⚠️ It must READ as a person, not another animal: upright, two legs, two
+   arms, a masked head. When cloaked it is a shimmer you can just about catch
+   against the sky, which is the whole reason the cloak is worth having and
+   the whole reason using it costs you.
+   ============================================================ */
+let clanView=null, clanCloakMat=null;
+function buildClanHunter(){
+  const g=new THREE.Group();
+  const hide=new THREE.MeshStandardMaterial({color:0x6d5f52,roughness:0.7,
+    metalness:0.15,flatShading:true});
+  const mask=new THREE.MeshStandardMaterial({color:0xa8a294,roughness:0.35,
+    metalness:0.7,flatShading:true});
+  const H=2.35;                                   // taller than you
+  const hip=V(0,H*0.46,0), chest=V(0,H*0.80,0), neck=V(0,H*0.90,0);
+  g.add(bone(hide, hip, chest, 0.26, 0.32));
+  g.add(joint(hide, chest, 0.30));
+  g.add(joint(hide, hip, 0.25));
+  for(const s of [-1,1]){                          // legs
+    const lg=makeLimb(hide, H*0.46, 0.10, 0.35);
+    lg.position.set(0, hip.y, s*0.15); g.add(lg);
+  }
+  for(const s of [-1,1]){                          // arms
+    const arm=makeLimb(hide, H*0.34, 0.075, -0.3);
+    arm.position.set(0, chest.y, s*0.30);
+    arm.rotation.z=s*0.42; g.add(arm);
+    /* wrist blades — the same weapon you carry */
+    const bl=new THREE.Mesh(new THREE.ConeGeometry(0.045,0.5,4),mask);
+    bl.rotation.x=-Math.PI/2;
+    bl.position.set(0, chest.y-H*0.34, s*0.30+0.1); g.add(bl);
+  }
+  /* masked head — no face, which is the point */
+  g.add(bone(hide, chest, neck, 0.16, 0.13));
+  const skull=new THREE.Mesh(new THREE.IcosahedronGeometry(0.22,1),hide);
+  skull.position.copy(neck).add(V(0,0.18,0)); skull.scale.set(0.95,1.05,0.9);
+  g.add(skull);
+  const face=new THREE.Mesh(new THREE.IcosahedronGeometry(0.17,0),mask);
+  face.position.copy(neck).add(V(0.11,0.17,0)); face.scale.set(0.7,1.0,0.95);
+  g.add(face);
+  for(const s of [-1,1]){                          // dreadlocks
+    const d=new THREE.Mesh(new THREE.CylinderGeometry(0.026,0.014,0.5,4),hide);
+    d.position.copy(neck).add(V(-0.16,0.06,s*0.12)); d.rotation.x=s*0.2;
+    g.add(d);
+  }
+  return g;
+}
+function drawClan(){
+  const C=sim.clan;
+  if(!C || !C.alive){ if(clanView) clanView.visible=false; return; }
+  if(!clanView){ clanView=buildClanHunter(); scene.add(clanView); }
+  clanView.visible=true;
+  clanView.position.set(C.x, W.heightAt(C.x,C.z), C.z);
+  clanView.rotation.y=C.facing;
+  /* the cloak: near-invisible, but not perfectly — you CAN catch it */
+  const cl=C.cloaked;
+  clanView.traverse(m=>{ if(!m.isMesh) return;
+    m.material.transparent=cl; m.material.opacity=cl?0.13:1.0;
+    m.material.depthWrite=!cl; });
+}
+
 /* carrion — a kill you did not make, and the reason the scavengers came */
 const carrionGeo=new THREE.IcosahedronGeometry(0.62,0);
 const carrionMat=new THREE.MeshStandardMaterial({color:0x5a4038,roughness:1,
@@ -1367,12 +1429,18 @@ function swingBlade(){
   /* reach out along the way you are looking */
   const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
   const p=sim.player, eyeY=W.heightAt(p.x,p.z)+(p.crouch?1.05:1.7);
-  let hit=null;
-  for(let step=1; step<=5 && !hit; step++){
+  let hit=null, ch=null;
+  for(let step=1; step<=5 && !hit && !ch; step++){
     const t=step/5*BLADE_REACH;
-    hit=creatureHit(p.x+dir.x*t, eyeY+dir.y*t, p.z+dir.z*t);
+    ch=clanHit(p.x+dir.x*t, eyeY+dir.y*t, p.z+dir.z*t);
+    if(!ch) hit=creatureHit(p.x+dir.x*t, eyeY+dir.y*t, p.z+dir.z*t);
   }
-  if(hit) resolveHit(hit, 'body', true, 'blade');   // the blade never caps you
+  /* ⚠️ taking a clan hunter with the BLADE is the redemption the fiction
+     wants — a dangerous assignment no hunter in good standing would take. */
+  if(ch){ const d=Math.hypot(p.x-ch.x,p.z-ch.z);
+    showReckoning(sim.strikeClan({dist:d, part:'body'}));
+    if(clanView) clanView.visible=false; }
+  else if(hit) resolveHit(hit, 'body', true, 'blade');   // the blade never caps
   else flash('YOU CUT AIR');
 }
 function updateBlade(dt){
@@ -1406,6 +1474,30 @@ function throwSpear(){
    low-bodied ones entirely (a skimmer spans -0.08..0.76, wholly beneath it),
    so a clean hit passed straight through. Bodies are generated now — the
    hitbox has to be generated with them. */
+/* ⚠️ THE CLAN COMES FOR YOU ON A DELAY, not the instant you cross the line —
+   you get a beat to understand what you have become before it arrives. */
+let hunterT=0, warned=false;
+function maybeSendHunter(dt){
+  const H=sim.hunter;
+  if(!H.badBlood){ hunterT=0; warned=false;
+    if(sim.clan) sim.despawnClanHunter(); return; }
+  if(sim.clan) return;
+  hunterT+=dt;
+  if(!warned && hunterT>2){ warned=true;
+    flash('YOU ARE A BAD BLOOD. THEY WILL SEND SOMEONE.'); }
+  if(hunterT>26){ sim.spawnClanHunter(); hunterT=0;
+    flash('SOMETHING IS ON THIS WORLD THAT CAME FOR YOU'); }
+}
+
+/* the clan hunter takes a hit like anything else — but scores like nothing else */
+function clanHit(px,py,pz){
+  const C=sim.clan;
+  if(!C || !C.alive || !clanView || !clanView.visible) return null;
+  const gy=W.heightAt(C.x,C.z);
+  if(Math.hypot(px-C.x,pz-C.z) < 1.1 && py > gy && py < gy+2.5) return C;
+  return null;
+}
+
 function creatureHit(px,py,pz){
   for(let i=0;i<sim.fauna.length;i++){
     const c=sim.fauna[i];
@@ -1445,6 +1537,14 @@ function updateSpears(dt){
     const s=flying[i];
     s.v.y-=13*dt; s.p.addScaledVector(s.v,dt);
     s.mesh.position.copy(s.p); s.mesh.lookAt(_v.copy(s.p).add(s.v));
+    const ch=clanHit(s.p.x,s.p.y,s.p.z);
+    if(ch){
+      s.mesh.visible=false; flying.splice(i,1);
+      const d=Math.hypot(sim.player.x-ch.x, sim.player.z-ch.z);
+      showReckoning(sim.strikeClan({dist:d, part:s.p.y>W.heightAt(ch.x,ch.z)+2.0?'skull':'body'}));
+      if(clanView) clanView.visible=false;
+      continue;
+    }
     const hit=creatureHit(s.p.x,s.p.y,s.p.z);
     if(hit){
       /* WHERE it hit decides the trophy — a skull shot ruins it (§3). There
@@ -1566,8 +1666,17 @@ function closeHall(){ hallOpen=false; el('hall').classList.remove('on');
 
 function renderHall(){
   const H=sim.hunter, st=standing(H.trophies), r=rankOf(st), nx=nextRank(st);
+  const fl=fallOf(H.disgrace||0);
   el('hl-rank').textContent=r.label;
-  el('hl-note').textContent=r.note;
+  el('hl-rank').style.color = fl.key==='good' ? '#e8c88a' : '#d97a4a';
+  /* ⚠️ standing and disgrace are DIFFERENT AXES and the Hall must say so —
+     you can be a celebrated hunter and a cast-out one at the same time. */
+  el('hl-note').innerHTML = r.note +
+    (fl.key!=='good'
+      ? '<br><span style="color:#d97a4a">'+fl.label+' — '+fl.note+'</span>'+
+        (H.clanKills? '<br><span style="opacity:.6">'+H.clanKills+
+          ' of your own taken.</span>':'')
+      : '');
   el('hl-stand').innerHTML='STANDING <b style="color:#e8c88a">'+Math.round(st)+
     '</b> &nbsp;·&nbsp; a rolling average of your last '+STANDING_WINDOW+
     ' trophies'+(nx?' &nbsp;·&nbsp; '+nx.label+' at '+nx.at:' &nbsp;·&nbsp; the top of the hall');
@@ -1650,6 +1759,8 @@ universe.record(SEED, {
 }
 function commitWorld(){
   universe.hunter = sim.hunter;          // live; save() packs it
+  /* an OUTCAST's clan stops updating their charts (M10) */
+  universe.chartsDark = !!fallOf(sim.hunter.disgrace||0).chartsDark;
   universe.record(SEED, {
     kills: sim.hunter.trophies.length,
     honor: Math.round(sim.hunter.honor), bounty: Math.round(sim.hunter.bounty),
@@ -1922,9 +2033,14 @@ function updateHUD(dt){
   } else el('assess').innerHTML = (Q.alive&&!Q.gone)
     ? '<div style="opacity:.5">'+(mods.optic?'CANNOT FOCUS':'TOO FAR TO READ')+'</div>' : '';
 
+  const fl=fallOf(sim.hunter.disgrace||0);
   el('ledger').innerHTML='HONOR <b>'+Math.round(sim.hunter.honor)+
     '</b> &nbsp; BOUNTY <b>'+Math.round(sim.hunter.bounty)+'</b>'+
-    (sim.hunter.voids?' &nbsp; <span style="color:#d97a4a">VOIDS '+sim.hunter.voids+'</span>':'');
+    (sim.hunter.voids?' &nbsp; <span style="color:#d97a4a">VOIDS '+sim.hunter.voids+'</span>':'')+
+    (fl.key!=='good'?'<div style="color:#d97a4a;margin-top:3px">'+fl.label+'</div>':'')+
+    (sim.clan&&sim.clan.alive
+      ? '<div style="color:#e05a4a">'+(sim.clan.cloaked?'SOMETHING IS OUT THERE'
+        :'IT HAS DROPPED ITS CLOAK')+'</div>' : '');
 
   if(mods.bleeding) k+='<div class="bleed">BLEEDING</div>';
   if(Q.drewBlood && Q.alive)
@@ -1970,7 +2086,8 @@ function stepFrame(dt, withInput){
       :'IT KNOWS — IT '+(sim.Q.lastChannel==='SIGHT'?'SAW YOU'
         :sim.Q.lastChannel==='SCENT'?'CAUGHT YOUR SCENT':'HEARD YOU'));
   }
-  drawQuarry(); drawFauna(); drawCarrion(); updateCalls(dt);
+  drawQuarry(); drawFauna(); drawClan(); drawCarrion(); updateCalls(dt);
+  maybeSendHunter(dt);
   drawTracks(); drawPuffs(dt); drawCover(); updateSpears(dt); updateBlade(dt);
   updateWound(dt);
   if(optic===0) applySky();
@@ -2033,6 +2150,8 @@ window.__Q={sim,PROFILES,frames:()=>frames,optic:()=>optic,setOptic,
   openHall, closeHall, renderHall, hallOpen:()=>hallOpen,
   openMarket, closeMarket, renderMarket, mktOpen:()=>mktOpen,
   merchantHere:()=>merchantFor(SEED),
+  clan:()=>sim.clan, sendHunter:()=>sim.spawnClanHunter(),
+  fall:()=>fallOf(sim.hunter.disgrace||0),
   commitWorld, seed:SEED,
   assess:()=>sim.assess(optic), reckoning:()=>sim.lastReckoning,
   strike:(o)=>{ const r=sim.strike(o); if(!r.wounded) showReckoning(

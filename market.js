@@ -92,7 +92,10 @@ export function merchantFor(worldSeed){
     name: pick(MERCHANT_NAMES, 2),
     keeper: pick(MERCHANT_KEEPERS, 5),
     stock, drift: Math.round(drift*100)/100,
-    /* ⚠️ some will not deal with a Bad Blood — M10 sets the flag, this reads it */
+    /* how far you can fall before THIS keeper stops meeting your eye:
+       1 = the fastidious ones close at WATCHED, 3 = the ones who deal with
+       anyone right up until BAD BLOOD */
+    tolerance: 1 + (h % 3),
     refusesBadBlood: (h % 3) === 0
   };
 }
@@ -104,11 +107,23 @@ export const priceOf = (key, merchant) => {
 
 /* ---------- buying ----------
    Pure function over the hunter: returns what changed, or why it could not. */
+/* ⚠️ MERCHANTS CLOSE ONE AT A TIME (§11), they do not all slam shut at once.
+   Each hulk has a `tolerance` 1..3; a keeper stops dealing once your fall has
+   reached theirs. So the world narrows gradually, which is the point — you
+   feel it closing rather than hitting a wall. */
+export const FALL_RANK = { good:0, watched:1, outcast:2, badblood:3 };
+export function keeperRefuses(hunter, merchant){
+  if(!merchant) return false;
+  const fall = FALL_RANK[hunter.fall || 'good'] || 0;
+  if(fall === 0) return false;
+  return fall >= (merchant.tolerance || 3);
+}
+
 export function canBuy(hunter, key, merchant){
   const item = WEAPONS[key] || GEAR[key];
   if(!item) return { ok:false, why:'no such thing' };
-  if(merchant && merchant.refusesBadBlood && hunter.badBlood)
-    return { ok:false, why:'this keeper will not deal with a Bad Blood' };
+  if(keeperRefuses(hunter, merchant))
+    return { ok:false, why:'this keeper will not deal with you any more' };
   const price = priceOf(key, merchant);
   if((hunter.bounty||0) < price) return { ok:false, why:'not enough bounty', price };
   if(WEAPONS[key] && hunter.kit[key]) return { ok:false, why:'you carry one already', price };

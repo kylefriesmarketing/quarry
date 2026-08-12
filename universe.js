@@ -119,7 +119,13 @@ export function createUniverse(galaxySeed = 20260811){
 
   /* Write down what this visit taught us. Called on arrival and on leaving —
      everything here is a DELTA the seed could not have told us. */
+  /* ⚠️ THE CHARTS GO DARK WHEN YOU DO (M10). An OUTCAST's clan stops updating
+     their charts — new worlds simply do not get written down, so you hunt
+     blind until you climb back. Worlds already in the journal are kept; they
+     are yours, not the clan's. */
+  u.chartsDark = false;
   u.record = function(seed, patch){
+    if(u.chartsDark && !u.journal[seed]) return null;
     const e = u.journal[seed] || {
       seed, visits:0, firstSeen:null, law:null, biome:null,
       species:[], zones:null, kills:0, honor:0, bounty:0,
@@ -239,7 +245,8 @@ export function packHunter(hunter){
     honor:hunter.honor, bounty:hunter.bounty, voids:hunter.voids,
     standing:hunter.standing||0, everHadCloak:!!hunter.everHadCloak,
     primary:hunter.primary||'spears', gear:{...(hunter.gear||{})},
-    badBlood:!!hunter.badBlood,
+    badBlood:!!hunter.badBlood, disgrace:hunter.disgrace||0,
+    fall:hunter.fall||'good', clanKills:hunter.clanKills||0,
     doctrine:hunter.doctrine, taken:[...hunter.taken],
     trophies: JSON.parse(JSON.stringify(hunter.trophies)),
     lastApproach:{...hunter.lastApproach}, approachRun:{...hunter.approachRun},
@@ -256,7 +263,8 @@ export function unpackHunter(hunter, packed){
     honor:packed.honor||0, bounty:packed.bounty||0, voids:packed.voids||0,
     standing:packed.standing||0, everHadCloak:!!packed.everHadCloak,
     primary:packed.primary||'spears', gear:{...(packed.gear||{})},
-    badBlood:!!packed.badBlood,
+    badBlood:!!packed.badBlood, disgrace:packed.disgrace||0,
+    fall:packed.fall||'good', clanKills:packed.clanKills||0,
     doctrine:packed.doctrine||'vokaar', taken:[...(packed.taken||[])],
     trophies: JSON.parse(JSON.stringify(packed.trophies||[])),
     lastApproach:{...(packed.lastApproach||{})},
