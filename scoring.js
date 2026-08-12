@@ -119,6 +119,7 @@ export function repetitionMult(consecutive){
 
 /* ---------- THE VOID — score zero, and recorded ---------- */
 export const VOID_REASONS = {
+  doctrine: 'Your doctrine forbids this kill.',
   gravid:   'You killed a gravid female. The pheromone optic exists. You were told.',
   young:    'You killed the young.',
   noThreat: 'It could not have harmed you. That is not a hunt.',
@@ -136,18 +137,109 @@ export function voidCheck(ctx){
   return null;
 }
 
+/* ============================================================
+   M9 — CLAN STANDING
+   ⚠️ THE ONLY PERSISTENT NUMBER IN THE GAME, and it is a ROLLING AVERAGE OF
+   YOUR LAST TWENTY TROPHIES (§1). Not a total, not a meter. Ghost of Tsushima
+   pointedly shipped a game about a collapsing honor code with NO honor meter,
+   because the known failure of karma systems is that players pick a lane in
+   hour one and never revisit it. A rolling average always decays, always
+   forgives, and always asks again.
+   ============================================================ */
+export const STANDING_WINDOW = 20;
+export function standing(trophies){
+  if(!trophies || !trophies.length) return 0;
+  const last = trophies.slice(-STANDING_WINDOW);
+  return last.reduce((a,t)=>a+(t.score||0),0) / last.length;
+}
+
+/* The cloak is EARNED, not bought (Badlands canon, §10). You begin without
+   one; it arrives at ELDER as recognition — and from that moment the most
+   powerful thing you own is the one that ruins your score. */
+export const RANKS = [
+  { key:'unblooded', label:'UNBLOODED', at:0,
+    note:'You have taken nothing that counts.' },
+  { key:'blooded',   label:'BLOODED',   at:110,
+    note:'They know your name in the hall.' },
+  { key:'hunter',    label:'HUNTER',    at:300,
+    note:'You are trusted with the charts.' },
+  { key:'elder',     label:'ELDER',     at:640, grants:'cloak',
+    note:'The cloak is yours. Using it is the choice they are watching.' },
+  { key:'clanlord',  label:'CLAN LORD', at:1150,
+    note:'The great hunts are open to you.' }
+];
+export function rankOf(st){
+  let r = RANKS[0];
+  for(const k of RANKS) if(st >= k.at) r = k;
+  return r;
+}
+export function nextRank(st){ return RANKS.find(k=>k.at > st) || null; }
+
+/* ============================================================
+   M7 — THE DOCTRINES
+   Four answers to what makes a kill honorable. Each defines its own RITE
+   (see RITES above) and its own PROHIBITION — a hard cap, not a scolding.
+   ⚠️ A doctrine that only grants bonuses is a class pick. These cost you
+   something real, and that is the entire point of picking one.
+   ============================================================ */
+export const CAP_ORDER = ['butchery','culling','clean','closework','contest','rite'];
+export const DOCTRINES = {
+  vokaar: { label:'VOKAAR', sub:'The Unshrouded', line:'It must see what kills it.',
+    /* the cloak hardware is simply not in their mask */
+    noCloak:true, con:1.35, healRate:1.55,
+    prohibition:'Anything killed while FLEEING you caps at Clean.',
+    cap: c => c.fleeing ? 'clean' : null },
+  ssith:  { label:'SSITH', sub:'The Single Edge', line:'Once. Only ever once.',
+    opticRange:1.35, con:0.72,
+    prohibition:'A SECOND wound on the same quarry voids the trophy entirely.',
+    cap: c => c.strikes > 1 ? 'VOID' : null },
+  krahn:  { label:'KRAHN', sub:'The Answered', line:'We do not take. We accept.',
+    con:1.20,
+    prohibition:'No score from a fleeing target, ever.',
+    cap: c => c.fleeing ? 'VOID' : null },
+  ossun:  { label:'OSSUN', sub:'The Long Patience', line:'Know the life before you end it.',
+    senses:1.25, con:0.9,
+    prohibition:'Nothing above Clean counts until you have watched a full cycle.',
+    cap: c => !c.cycleObserved ? 'clean' : null }
+};
+export const DOCTRINE_KEYS = Object.keys(DOCTRINES);
+
+/* Apply a doctrine's prohibition to an already-graded kill. Returns either a
+   capped method, or a VOID — the doctrine was violated outright. */
+export function applyDoctrine(method, ctx){
+  const d = DOCTRINES[ctx.doctrine];
+  if(!d || !d.cap) return { method, capped:false };
+  const cap = d.cap(ctx);
+  if(!cap) return { method, capped:false };
+  if(cap === 'VOID') return { method, doctrineVoid:true, capped:false };
+  const have = CAP_ORDER.indexOf(method), lim = CAP_ORDER.indexOf(cap);
+  return { method: have > lim ? cap : method, capped: have > lim };
+}
+
 /* ---------- THE RECKONING ---------- */
 export function trophyScore(o){
   const voided = voidCheck(o);
   const value  = quarryValue(o.tier, o.specimenPct);
-  const method = o.method || gradeMethod(o);
+  let   method = o.method || gradeMethod(o);
+  /* ⚠️ the doctrine bites AFTER the beast has decided the grade — it can only
+     ever take the kill DOWN, never lift it */
+  const doc    = applyDoctrine(method, o);
+  method       = doc.method;
   const mult   = METHOD[method].mult;
   const cond   = (o.integrity ?? 1) * (PARTY_MULT[o.party || 1] ?? 1) * (o.doctrineCap ?? 1);
   const rep    = repetitionMult(o.consecutive || 0);
-  const score  = voided ? 0 : value * mult * cond * rep;
+  const dead   = voided || (doc.doctrineVoid ? 'doctrine' : null);
+  const score  = dead ? 0 : value * mult * cond * rep;
   return {
-    voided, voidReason: voided ? VOID_REASONS[voided] : null,
+    voided: dead,
+    /* ⚠️ a doctrine void must name the RULE YOU BROKE, not "your doctrine
+       forbids this" — the player has to be able to learn from it */
+    voidReason: !dead ? null
+      : dead==='doctrine'
+        ? (DOCTRINES[o.doctrine]?.prohibition || VOID_REASONS.doctrine)
+        : VOID_REASONS[dead],
     value, method, methodLabel: METHOD[method].label, methodMult: mult,
+    doctrineCapped: !!doc.capped,
     band: bandOf(o.specimenPct), condition: cond, repetition: rep,
     score: Math.round(score)
   };

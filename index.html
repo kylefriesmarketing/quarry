@@ -180,6 +180,45 @@
         border-top:1px solid rgba(232,200,138,.14);padding-top:9px}
   #jrnl b{color:#cbb389;font-weight:normal}
   #jrnl .nem{color:#c58a5e}
+  /* --- THE HALL (M9) + DOCTRINES (M7) --- */
+  #hall{position:fixed;inset:0;z-index:61;background:#06070a;display:none;
+        flex-direction:column;align-items:center;padding:24px 20px;overflow:auto}
+  #hall.on{display:flex}
+  #hall h2{font-size:15px;letter-spacing:.42em;font-weight:normal;color:#c9a578}
+  #hall .rank{font-size:30px;letter-spacing:.3em;color:#e8c88a;margin:8px 0 2px}
+  #hall .rnote{font-size:11px;color:var(--dim);letter-spacing:.16em;margin-bottom:14px;
+               text-align:center;max-width:560px;line-height:1.9}
+  #standbar{width:min(560px,90vw);height:3px;background:rgba(232,200,138,.14);
+            position:relative;margin-bottom:6px}
+  #standfill{position:absolute;left:0;top:0;bottom:0;background:#e8c88a}
+  #hall .standnum{font-size:9.5px;color:var(--dim);letter-spacing:.2em;margin-bottom:18px}
+  #hall .cols{display:flex;gap:26px;flex-wrap:wrap;justify-content:center;
+              width:min(900px,95vw)}
+  #hall .col{flex:1;min-width:250px}
+  #hall .colh{font-size:9px;color:var(--dim);letter-spacing:.3em;
+              border-bottom:1px solid rgba(232,200,138,.16);padding-bottom:5px;
+              margin-bottom:8px}
+  #hall .skull{font-size:10px;line-height:1.95;color:#b9a37e;letter-spacing:.08em}
+  #hall .skull .g{color:#e8c88a} #hall .skull .v{color:var(--warn)}
+  #hall .skull .d{color:var(--dim)}
+  #hall .empty{font-size:10.5px;color:var(--dim);font-style:italic;line-height:1.9}
+  #doct{display:flex;gap:9px;flex-wrap:wrap;justify-content:center;margin:14px 0 4px}
+  .dcard{border:1px solid rgba(232,200,138,.22);padding:10px 13px;width:196px;
+         cursor:pointer;text-align:left}
+  .dcard:hover{border-color:#d9b98a;background:rgba(232,200,138,.06)}
+  .dcard.on{border-color:#e8c88a;background:rgba(232,200,138,.10)}
+  .dcard .dn{font-size:12px;letter-spacing:.22em;color:#e8c88a}
+  .dcard .ds{font-size:9px;color:var(--dim);letter-spacing:.14em;margin-bottom:5px}
+  .dcard .dl{font-size:10px;color:#b9a37e;font-style:italic;line-height:1.7}
+  .dcard .dp{font-size:9px;color:var(--warn);line-height:1.65;margin-top:5px}
+  #hall button{background:none;color:#d9b98a;border:1px solid rgba(232,200,138,.3);
+    font-family:inherit;font-size:10px;letter-spacing:.16em;padding:9px 16px;
+    cursor:pointer;margin-top:16px}
+  #hall button:hover{border-color:#d9b98a;background:rgba(232,200,138,.07)}
+  #hallbtn{position:fixed;right:28px;bottom:126px;z-index:26;font-size:9.5px;
+           letter-spacing:.2em;color:var(--dim);border:1px solid rgba(232,200,138,.26);
+           padding:7px 13px;cursor:pointer;background:rgba(5,7,10,.55)}
+  #hallbtn:hover{color:#e8c88a;border-color:rgba(232,200,138,.6)}
   #shipbtn{position:fixed;right:28px;bottom:96px;z-index:26;font-size:9.5px;
            letter-spacing:.2em;color:var(--dim);border:1px solid rgba(232,200,138,.26);
            padding:7px 13px;cursor:pointer;background:rgba(5,7,10,.55)}
@@ -264,7 +303,24 @@
   <div id="wk-pick"></div>
   <div class="go" id="wk-go">CLICK TO GO BACK DOWN</div>
 </div>
+<div id="hallbtn">&#9776; THE HALL &nbsp;[H]</div>
 <div id="shipbtn">&#9650; RETURN TO SHIP &nbsp;[TAB]</div>
+<div id="hall">
+  <h2>THE HALL</h2>
+  <div class="rank" id="hl-rank">UNBLOODED</div>
+  <div class="rnote" id="hl-note">—</div>
+  <div id="standbar"><div id="standfill"></div></div>
+  <div class="standnum" id="hl-stand">—</div>
+  <div class="cols">
+    <div class="col"><div class="colh">THE WALL &mdash; YOUR LAST TWENTY ANSWERS</div>
+      <div class="skull" id="hl-wall"></div></div>
+    <div class="col"><div class="colh">THE BESTIARY</div>
+      <div class="skull" id="hl-best"></div></div>
+  </div>
+  <div class="colh" style="margin-top:22px;width:min(900px,95vw)">YOUR DOCTRINE</div>
+  <div id="doct"></div>
+  <button id="hl-back">BACK</button>
+</div>
 <div id="ship">
   <h2>THE SHIP</h2>
   <div class="whereami" id="sh-where">—</div>
@@ -297,7 +353,8 @@ import * as THREE from 'three';
 import {createSim, makeRNG, PROFILES, WORLD_SIZE, WATER_Y, GRID,
         INJURIES, KIT} from './sim.js';
 import {LOCOMOTION, LAWS, BIOMES} from './worldgen.js';
-import {METHOD, TIERS, bandOf} from './scoring.js';
+import {METHOD, TIERS, bandOf, standing, rankOf, nextRank, RANKS,
+        DOCTRINES, DOCTRINE_KEYS, STANDING_WINDOW} from './scoring.js';
 import {createPost} from './post.js';
 import {createSfx} from './sfx.js';
 import {loadUniverse, packHunter, unpackHunter, jumpCost,
@@ -888,6 +945,8 @@ addEventListener('keydown',e=>{ keys[e.code]=true;
   if(reckOpen){ if(e.code==='Space'||e.code==='Enter') dismissReckoning(); return; }
   if(e.code==='Tab'){ e.preventDefault(); shipOpen?closeShip():openShip(); return; }
   if(shipOpen){ if(e.code==='Escape') closeShip(); return; }
+  if(e.code==='KeyH'){ hallOpen?closeHall():openHall(); return; }
+  if(hallOpen){ if(e.code==='Escape') closeHall(); return; }
   if(e.code==='Digit1')tryOptic(0,null);
   if(e.code==='Digit2')tryOptic(1,'thermal');
   if(e.code==='Digit3')tryOptic(2,'pheromone');
@@ -910,11 +969,14 @@ el('wake').addEventListener('click',()=>{ if(dismissWake())
 el('reck').addEventListener('click',()=>{ if(dismissReckoning())
   renderer.domElement.requestPointerLock(); });
 el('shipbtn').addEventListener('click',e=>{ e.stopPropagation(); openShip(); });
+el('hallbtn').addEventListener('click',e=>{ e.stopPropagation(); openHall(); });
+el('hl-back').addEventListener('click',()=>{ closeHall();
+  renderer.domElement.requestPointerLock(); });
 el('sh-back').addEventListener('click',()=>{ closeShip();
   renderer.domElement.requestPointerLock(); });
 el('sh-refuel').addEventListener('click',()=>{ universe.refuel(25); commitWorld(); renderShip(); });
 el('sh-fill').addEventListener('click',()=>{ universe.refuel(FUEL_MAX); commitWorld(); renderShip(); });
-addEventListener('click',()=>{ if(wakeOpen||reckOpen||shipOpen) return;
+addEventListener('click',()=>{ if(wakeOpen||reckOpen||shipOpen||hallOpen) return;
   if(gate.classList.contains('hide') &&
      document.pointerLockElement!==renderer.domElement){
     renderer.domElement.requestPointerLock(); return; }
@@ -1341,6 +1403,72 @@ function dismissWake(){
 function triggerBreak(cause){ const ev=sim.breakHunter(cause||'test'); onBroken(ev); return ev; }
 
 /* ============================================================
+   THE HALL (M9) + THE DOCTRINES (M7)
+   ⚠️ The wall of skulls is NOT a progress bar. It is a record of every answer
+   you gave — so it shows the GRADE of each kill, not a running total, and the
+   only number on it is a rolling average that forgives.
+   ============================================================ */
+let hallOpen=false;
+function openHall(){
+  if(document.pointerLockElement) document.exitPointerLock();
+  hallOpen=true; el('hall').classList.add('on'); renderHall();
+}
+function closeHall(){ hallOpen=false; el('hall').classList.remove('on');
+  last=performance.now(); }
+
+function renderHall(){
+  const H=sim.hunter, st=standing(H.trophies), r=rankOf(st), nx=nextRank(st);
+  el('hl-rank').textContent=r.label;
+  el('hl-note').textContent=r.note;
+  el('hl-stand').innerHTML='STANDING <b style="color:#e8c88a">'+Math.round(st)+
+    '</b> &nbsp;·&nbsp; a rolling average of your last '+STANDING_WINDOW+
+    ' trophies'+(nx?' &nbsp;·&nbsp; '+nx.label+' at '+nx.at:' &nbsp;·&nbsp; the top of the hall');
+  const lo=r.at, hi=nx?nx.at:Math.max(st,r.at+1);
+  el('standfill').style.width=Math.max(2,Math.min(100,(st-lo)/(hi-lo)*100))+'%';
+
+  /* THE WALL — every answer, most recent first */
+  const last20=H.trophies.slice(-STANDING_WINDOW).reverse();
+  el('hl-wall').innerHTML = last20.length ? last20.map(t=>{
+    const cls = t.voided?'v':(t.methodMult>=2.3?'g':'');
+    return '<div class="'+cls+'">'+(t.voided?'✕':'●')+' '+
+      (t.species||'—')+' <span class="d">'+t.methodLabel+'</span> '+
+      (t.voided?'<span class="v">VOID</span>':t.score)+'</div>';
+  }).join('') : '<div class="empty">Nothing yet. The wall is where the answers go.</div>';
+
+  /* THE BESTIARY — what you have met, across the whole galaxy */
+  const b={};
+  for(const t of H.trophies){ const k=t.species||'—';
+    b[k]=b[k]||{n:0,best:0,law:null};
+    b[k].n++; b[k].best=Math.max(b[k].best,t.score||0); }
+  for(const e of Object.values(universe.journal))
+    for(const sp of (e.species||[])) if(!b[sp]) b[sp]={n:0,best:0,seen:true};
+  const rows=Object.entries(b).sort((a,c)=>c[1].n-a[1].n).slice(0,14);
+  el('hl-best').innerHTML = rows.length ? rows.map(([k,v])=>
+    '<div>'+k+' <span class="d">'+(v.n?v.n+' taken · best '+v.best:'seen, never taken')+
+    '</span></div>').join('')
+    : '<div class="empty">You have not met anything yet.</div>';
+
+  /* THE DOCTRINES — swappable only before your first trophy */
+  const locked = H.trophies.length>0;
+  el('doct').innerHTML = DOCTRINE_KEYS.map(k=>{
+    const d=DOCTRINES[k];
+    return '<div class="dcard'+(H.doctrine===k?' on':'')+'" data-d="'+k+'">'+
+      '<div class="dn">'+d.label+'</div><div class="ds">'+d.sub+'</div>'+
+      '<div class="dl">“'+d.line+'”</div>'+
+      '<div class="dp">'+d.prohibition+'</div></div>';
+  }).join('') + (locked
+    ? '<div class="empty" style="width:100%;text-align:center;margin-top:8px">'+
+      'Your doctrine is set. It is answered in kills, not chosen twice.</div>'
+    : '');
+  if(!locked) for(const c of el('doct').querySelectorAll('.dcard'))
+    c.addEventListener('click',()=>{ sim.hunter.doctrine=c.dataset.d;
+      /* a VOKAAR hands the cloak back — the hardware is not in their mask */
+      if(DOCTRINES[c.dataset.d].noCloak){ sim.hunter.kit.cloak=false;
+        sim.player.cloaked=false; }
+      commitWorld(); renderHall(); });
+}
+
+/* ============================================================
    THE SHIP (M6) — the star map, the fuel, and the charts.
    ⚠️ Travel RELOADS THE PAGE with the new world. Same pattern as Age of Toys'
    campaign flow: there are no same-page world restarts, and trying to tear
@@ -1619,7 +1747,7 @@ function stepFrame(dt, withInput){
   /* the wake, reckoning and ship screens are modals — the world holds */
   if(wakeOpen){ updateWound(dt); post.update(dt,sim.simSec); drawFrame(); frames++; return; }
   if(reckOpen){ reckT+=dt; post.update(dt,sim.simSec); drawFrame(); frames++; return; }
-  if(shipOpen){ frames++; return; }        // you are not down there at all
+  if(shipOpen||hallOpen){ frames++; return; }   // you are not down there at all
   if(withInput) movePlayer(dt); else placeCamera(dt);
   lastPer=sim.step(dt);
   if(lastPer && lastPer.broke){
@@ -1691,6 +1819,7 @@ window.__Q={sim,PROFILES,frames:()=>frames,optic:()=>optic,setOptic,
   fauna:()=>sim.fauna, census:()=>sim.census(), faunaViews, sfx,
   wgen:()=>sim.wgen, law:()=>sim.law, biome:()=>sim.biome,
   universe, openShip, closeShip, renderShip, shipOpen:()=>shipOpen,
+  openHall, closeHall, renderHall, hallOpen:()=>hallOpen,
   commitWorld, seed:SEED,
   assess:()=>sim.assess(optic), reckoning:()=>sim.lastReckoning,
   strike:(o)=>{ const r=sim.strike(o); if(!r.wounded) showReckoning(

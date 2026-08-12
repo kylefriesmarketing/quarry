@@ -7,8 +7,8 @@
    INVARIANT: never Math.random() in this file. Use rng from makeRNG().
    ============================================================ */
 
-import { trophyScore, bountyValue, gradeMethod, INTEGRITY, TIERS }
-  from './scoring.js';
+import { trophyScore, bountyValue, gradeMethod, INTEGRITY, TIERS,
+         standing, rankOf, RANKS, DOCTRINES } from './scoring.js';
 import { generateWorld, nameTheNamed, LAWS, BIOMES, ROLES, LOCOMOTION }
   from './worldgen.js';
 export * from './scoring.js';
@@ -318,7 +318,11 @@ export function createSim(seed, profileKey='balanced'){
        You begin WITHOUT a cloak in the fiction (Badlands: it is earned);
        M1 hands you one so the "using it costs you" lever is playable. */
     hunter: {
-      kit:{ spears:true, blade:true, thermal:true, pheromone:true, cloak:true },
+      /* ⚠️ NO CLOAK. You begin without one (Badlands canon, §10) — it is
+         granted at ELDER as recognition. That is what makes the early game
+         teach wind and stillness instead of handing you the crutch first. */
+      kit:{ spears:true, blade:true, thermal:true, pheromone:true, cloak:false },
+      standing:0, everHadCloak:false,
       injuries:{}, breaks:0, scars:0, scarCredit:0, lastBreak:null, taken:[],
       bleed:0,          // seconds of open wound remaining
       bleeds:0,         // how many times you have been opened up
@@ -709,6 +713,8 @@ export function createSim(seed, profileKey='balanced'){
       cycleObserved: !!(Q.cycleSeen.GRAZE && Q.cycleSeen.DRINK && Q.cycleSeen.BED),
       inBeddingGround: Math.hypot(Q.x-world.zones.bed.x, Q.z-world.zones.bed.z) < 14,
       doctrine:H.doctrine, species:Q.species,
+      /* VOKAAR caps a fleeing kill at Clean; KRAHN voids it outright */
+      fleeing: Q.state==='FLEE' || Q.alertState==='SPOOKED',
       integrity: part==='skull' ? INTEGRITY.skull
                : part==='body'  ? INTEGRITY.clean : INTEGRITY.bodyDamage,
       party:1, consecutive:run,
@@ -732,6 +738,23 @@ export function createSim(seed, profileKey='balanced'){
     if(rec.voided) H.voids++;
     H.trophies.push(rec);
     sim.lastReckoning = rec;
+    /* M9: standing is a ROLLING AVERAGE, so it moves both ways on every kill */
+    rec.standingBefore = H.standing || 0;
+    H.standing = standing(H.trophies);
+    rec.standingAfter = H.standing;
+    rec.rank = rankOf(H.standing);
+    /* THE CLOAK IS EARNED (§10). Granted at ELDER, as recognition — and a
+       VOKAAR never gets one, because the hardware is not in their mask. */
+    /* ⚠️ compare against the THRESHOLD, not the current rank. A big enough
+       first trophy vaults you straight past ELDER to CLAN LORD, and a check
+       for `rank.grants === 'cloak'` would silently never fire — you would
+       outrank the reward and never receive it. */
+    const d = DOCTRINES[H.doctrine];
+    const elder = RANKS.find(r=>r.grants==='cloak');
+    if(elder && H.standing >= elder.at && !H.kit.cloak && !H.everHadCloak
+       && !(d&&d.noCloak)){
+      H.kit.cloak = true; H.everHadCloak = true; rec.granted = 'cloak';
+    }
     return rec;
   };
 
@@ -864,6 +887,7 @@ export function createSim(seed, profileKey='balanced'){
                pendingLoss:sim.hunter.pendingLoss
                  ?{options:[...sim.hunter.pendingLoss.options]}:null,
                doctrine:sim.hunter.doctrine, honor:sim.hunter.honor,
+               standing:sim.hunter.standing, everHadCloak:sim.hunter.everHadCloak,
                bounty:sim.hunter.bounty, voids:sim.hunter.voids,
                gaveGround:sim.hunter.gaveGround,
                trophies:JSON.parse(JSON.stringify(sim.hunter.trophies)),
@@ -891,6 +915,8 @@ export function createSim(seed, profileKey='balanced'){
     sim.hunter.pendingLoss=s.hunter.pendingLoss
       ?{options:[...s.hunter.pendingLoss.options]}:null;
     sim.hunter.doctrine=s.hunter.doctrine;
+    sim.hunter.standing=s.hunter.standing||0;
+    sim.hunter.everHadCloak=!!s.hunter.everHadCloak;
     sim.hunter.honor=s.hunter.honor||0; sim.hunter.bounty=s.hunter.bounty||0;
     sim.hunter.voids=s.hunter.voids||0;
     sim.hunter.gaveGround=!!s.hunter.gaveGround;
