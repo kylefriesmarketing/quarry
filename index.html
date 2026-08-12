@@ -137,6 +137,53 @@
   #ledger{left:28px;bottom:170px;font-size:9px;color:var(--dim);letter-spacing:.14em;
           line-height:1.9}
   #ledger b{color:#cbb389;font-weight:normal}
+  /* --- THE SHIP (M6) --- */
+  #ship{position:fixed;inset:0;z-index:59;background:#05070a;display:none;
+        flex-direction:column;align-items:center;padding:26px 20px;overflow:auto}
+  #ship.on{display:flex}
+  #ship h2{font-size:15px;letter-spacing:.42em;font-weight:normal;color:#c9a578;
+           margin-bottom:3px}
+  #ship .whereami{font-size:10px;color:var(--dim);letter-spacing:.2em;margin-bottom:16px;
+                  text-align:center;max-width:640px;line-height:1.9}
+  #ship .gauges{display:flex;gap:34px;margin-bottom:14px;font-size:9.5px;
+                color:var(--dim);letter-spacing:.22em;text-align:center}
+  #ship .gauges b{display:block;font-size:19px;margin-top:4px;font-weight:normal;
+                  color:#cbb389}
+  #ship .gauges .fuel b{color:#8fd0ff} #ship .gauges .money b{color:#8fbf7a}
+  #ship .gauges .hon b{color:#e8c88a}
+  #starmap{width:min(760px,94vw);height:min(430px,50vh);border:1px solid rgba(232,200,138,.18);
+           background:radial-gradient(ellipse at 50% 45%,#0b1018 0%,#05070a 75%);
+           position:relative;margin-bottom:12px;flex:none}
+  .sysnode{position:absolute;transform:translate(-50%,-50%);cursor:pointer;
+           text-align:center;width:112px}
+  .sysdot{width:11px;height:11px;border-radius:50%;background:#5c6a78;margin:0 auto 5px;
+          box-shadow:0 0 9px rgba(140,180,220,.5)}
+  .sysnode.known .sysdot{background:#e8c88a;box-shadow:0 0 12px rgba(232,200,138,.75)}
+  .sysnode.here  .sysdot{background:#8fd0ff;width:15px;height:15px;
+                         box-shadow:0 0 18px rgba(143,208,255,.95)}
+  .sysnode.far   .sysdot{background:#3a4048;box-shadow:none}
+  .sysname{font-size:9px;letter-spacing:.14em;color:#9aa4b0}
+  .sysnode.known .sysname{color:#e8c88a}
+  .sysnode.far   .sysname{color:#4d545c}
+  .syssub{font-size:8px;letter-spacing:.1em;color:#6d7580;margin-top:2px;line-height:1.5}
+  .sysnode:hover .sysdot{transform:scale(1.35)}
+  #ship .row{display:flex;gap:9px;flex-wrap:wrap;justify-content:center;margin-bottom:9px}
+  #ship button{background:none;color:#d9b98a;border:1px solid rgba(232,200,138,.3);
+    font-family:inherit;font-size:10px;letter-spacing:.16em;padding:9px 15px;cursor:pointer}
+  #ship button:hover:not(:disabled){border-color:#d9b98a;background:rgba(232,200,138,.07)}
+  #ship button:disabled{opacity:.32;cursor:default}
+  #ship .note{font-size:9.5px;color:var(--dim);letter-spacing:.14em;margin-bottom:8px;
+              text-align:center;max-width:620px;line-height:1.85}
+  #ship .warn{color:var(--warn)}
+  #jrnl{width:min(760px,94vw);font-size:9px;color:var(--dim);letter-spacing:.1em;
+        line-height:1.75;max-height:118px;overflow:auto;
+        border-top:1px solid rgba(232,200,138,.14);padding-top:9px}
+  #jrnl b{color:#cbb389;font-weight:normal}
+  #jrnl .nem{color:#c58a5e}
+  #shipbtn{position:fixed;right:28px;bottom:96px;z-index:26;font-size:9.5px;
+           letter-spacing:.2em;color:var(--dim);border:1px solid rgba(232,200,138,.26);
+           padding:7px 13px;cursor:pointer;background:rgba(5,7,10,.55)}
+  #shipbtn:hover{color:#e8c88a;border-color:rgba(232,200,138,.6)}
 </style>
 </head>
 <body>
@@ -214,6 +261,27 @@
   <div id="wk-pick"></div>
   <div class="go" id="wk-go">CLICK TO GO BACK DOWN</div>
 </div>
+<div id="shipbtn">&#9650; RETURN TO SHIP &nbsp;[TAB]</div>
+<div id="ship">
+  <h2>THE SHIP</h2>
+  <div class="whereami" id="sh-where">—</div>
+  <div class="gauges">
+    <div class="fuel">FUEL<b id="sh-fuel">0</b></div>
+    <div class="money">BOUNTY<b id="sh-bounty">0</b></div>
+    <div class="hon">HONOR<b id="sh-honor">0</b></div>
+    <div>JUMPS<b id="sh-jumps">0</b></div>
+    <div>WORLDS<b id="sh-worlds">0</b></div>
+  </div>
+  <div id="starmap"></div>
+  <div class="note" id="sh-note">Pick a system. A jump costs fuel; fuel costs bounty.</div>
+  <div class="row" id="sh-cross"></div>
+  <div class="row">
+    <button id="sh-refuel">REFUEL</button>
+    <button id="sh-fill">FILL THE TANK</button>
+    <button id="sh-back">BACK DOWN TO THE SURFACE</button>
+  </div>
+  <div id="jrnl"></div>
+</div>
 <div id="retic"></div><div id="msg"></div><div id="blood"></div>
 <div id="grain"></div><div id="scan"></div><div id="vig"></div>
 
@@ -229,6 +297,8 @@ import {LOCOMOTION, LAWS, BIOMES} from './worldgen.js';
 import {METHOD, TIERS, bandOf} from './scoring.js';
 import {createPost} from './post.js';
 import {createSfx} from './sfx.js';
+import {loadUniverse, packHunter, unpackHunter, jumpCost,
+        FUEL_MAX, REFUEL_COST, SECTOR_JUMP} from './universe.js';
 
 const el=id=>document.getElementById(id);
 const ERR=document.getElementById('err');
@@ -240,9 +310,24 @@ try{
 /* ============================================================
    SIM  (all logic lives in sim.js — this file is VIEW ONLY)
    ============================================================ */
-const PROFILE_POOL=['watcher','nose','listener','balanced','ambusher'];
+/* ============================================================
+   THE UNIVERSE (M6) — loaded BEFORE the world, because the universe is what
+   decides which world this is. A world is only a seed; the ship, the fuel,
+   the charts and the hunter are the save.
+   ============================================================ */
+const SAVE_KEY='quarry-universe';
 const QS=new URLSearchParams(location.search);
-const SEED=parseInt(QS.get('seed')||'20260811',10);
+if(QS.get('newgame')!==null){ try{ localStorage.removeItem(SAVE_KEY); }catch(e){} }
+const universe=loadUniverse((()=>{ try{ return localStorage.getItem(SAVE_KEY); }
+                                   catch(e){ return null; } })());
+function saveUniverse(){ try{ localStorage.setItem(SAVE_KEY, universe.save()); }
+                         catch(e){} }
+
+const PROFILE_POOL=['watcher','nose','listener','balanced','ambusher'];
+/* ⚠️ ?seed= still overrides, for testing and for sharing a specific world —
+   but the SHIP is the normal way you get somewhere now. */
+const URL_SEED=QS.get('seed');
+const SEED=URL_SEED!==null ? parseInt(URL_SEED,10) : universe.worldSeed();
 const PROFILE=PROFILES[QS.get('profile')] ? QS.get('profile')
               : PROFILE_POOL[SEED%PROFILE_POOL.length];
 const sim=createSim(SEED, PROFILE);
@@ -600,6 +685,8 @@ function tryOptic(o,need){
 addEventListener('keydown',e=>{ keys[e.code]=true;
   if(wakeOpen){ if(e.code==='Space'||e.code==='Enter') dismissWake(); return; }
   if(reckOpen){ if(e.code==='Space'||e.code==='Enter') dismissReckoning(); return; }
+  if(e.code==='Tab'){ e.preventDefault(); shipOpen?closeShip():openShip(); return; }
+  if(shipOpen){ if(e.code==='Escape') closeShip(); return; }
   if(e.code==='Digit1')tryOptic(0,null);
   if(e.code==='Digit2')tryOptic(1,'thermal');
   if(e.code==='Digit3')tryOptic(2,'pheromone');
@@ -620,7 +707,12 @@ el('wake').addEventListener('click',()=>{ if(dismissWake())
   renderer.domElement.requestPointerLock(); });
 el('reck').addEventListener('click',()=>{ if(dismissReckoning())
   renderer.domElement.requestPointerLock(); });
-addEventListener('click',()=>{ if(wakeOpen||reckOpen) return;
+el('shipbtn').addEventListener('click',e=>{ e.stopPropagation(); openShip(); });
+el('sh-back').addEventListener('click',()=>{ closeShip();
+  renderer.domElement.requestPointerLock(); });
+el('sh-refuel').addEventListener('click',()=>{ universe.refuel(25); commitWorld(); renderShip(); });
+el('sh-fill').addEventListener('click',()=>{ universe.refuel(FUEL_MAX); commitWorld(); renderShip(); });
+addEventListener('click',()=>{ if(wakeOpen||reckOpen||shipOpen) return;
   if(gate.classList.contains('hide') &&
   document.pointerLockElement!==renderer.domElement)
   renderer.domElement.requestPointerLock(); });
@@ -975,6 +1067,133 @@ function dismissWake(){
 function triggerBreak(cause){ const ev=sim.breakHunter(cause||'test'); onBroken(ev); return ev; }
 
 /* ============================================================
+   THE SHIP (M6) — the star map, the fuel, and the charts.
+   ⚠️ Travel RELOADS THE PAGE with the new world. Same pattern as Age of Toys'
+   campaign flow: there are no same-page world restarts, and trying to tear
+   down and rebuild a whole scene + sim in place is a bug farm. The universe
+   is in localStorage, so the reload is seamless.
+   ============================================================ */
+let shipOpen=false;
+
+/* The hunter travels; the world does not.
+   ⚠️ universe.hunter is then pointed at the LIVE hunter, so refuelling really
+   does spend your bounty. It is packed at save() time. */
+unpackHunter(sim.hunter, universe.hunter);
+universe.hunter = sim.hunter;
+/* arriving is itself something the journal should know */
+universe.record(SEED, {
+  visits: (universe.entry(SEED)?.visits || 0) + 1,
+  law: sim.wgen.law, biome: sim.wgen.biome,
+  species: sim.wgen.species.map(s=>s.label),
+  zones: { feed:[Math.round(W.zones.feed.x), Math.round(W.zones.feed.z)],
+           water:[Math.round(W.zones.water.x), Math.round(W.zones.water.z)],
+           bed:[Math.round(W.zones.bed.x), Math.round(W.zones.bed.z)] }
+});
+/* a nemesis recorded here keeps its gear across the galaxy */
+{
+  const e=universe.entry(SEED);
+  if(e && e.nemesis && e.nemesis.carrying){
+    sim.Q.carrying=e.nemesis.carrying;
+    sim.Q.wary=e.nemesis.wary||1;
+    sim.Q.drewBlood=!!e.nemesis.drewBlood;
+  }
+}
+function commitWorld(){
+  universe.hunter = sim.hunter;          // live; save() packs it
+  universe.record(SEED, {
+    kills: sim.hunter.trophies.length,
+    honor: Math.round(sim.hunter.honor), bounty: Math.round(sim.hunter.bounty),
+    nemesis: sim.Q.carrying ? { species:sim.Q.species,
+      label:sim.species[sim.Q.species].label, carrying:sim.Q.carrying,
+      wary:sim.Q.wary, drewBlood:sim.Q.drewBlood } : (universe.entry(SEED)?.nemesis||null)
+  });
+  saveUniverse();
+}
+
+function openShip(){
+  if(document.pointerLockElement) document.exitPointerLock();
+  commitWorld(); shipOpen=true; el('ship').classList.add('on'); renderShip();
+}
+function closeShip(){ shipOpen=false; el('ship').classList.remove('on');
+  last=performance.now(); }
+
+function renderShip(){
+  const here=universe.here(), sec=universe.sector(), e=universe.entry(SEED);
+  el('sh-where').innerHTML =
+    '<b style="color:#cbb389">'+here.name+'</b> &nbsp;·&nbsp; SECTOR '+
+    universe.at.sx+','+universe.at.sy+'<br>'+sim.wgen.description;
+  el('sh-fuel').textContent=Math.round(universe.fuel);
+  el('sh-bounty').textContent=Math.round(sim.hunter.bounty);
+  el('sh-honor').textContent=Math.round(sim.hunter.honor);
+  el('sh-jumps').textContent=universe.jumps;
+  el('sh-worlds').textContent=Object.keys(universe.journal).length;
+
+  const map=el('starmap'); map.innerHTML='';
+  for(const s of sec){
+    const cost = s.idx===universe.at.idx ? 0 : jumpCost(here,s);
+    const known = universe.known(s.seed);
+    const reach = cost<=universe.fuel;
+    const n=document.createElement('div');
+    n.className='sysnode'+(s.idx===universe.at.idx?' here':known?' known':'')+
+                (reach||s.idx===universe.at.idx?'':' far');
+    n.style.left=s.x+'%'; n.style.top=s.y+'%';
+    const je=universe.entry(s.seed);
+    n.innerHTML='<div class="sysdot"></div><div class="sysname">'+s.name+'</div>'+
+      '<div class="syssub">'+(s.idx===universe.at.idx ? 'YOU ARE HERE'
+        : (known ? LAWS[je.law].label.replace(/^(EVERYTHING|NOTHING)\s/,'')+'<br>' : 'UNCHARTED<br>')
+          + cost+' FUEL')+'</div>';
+    if(s.idx!==universe.at.idx) n.addEventListener('click',()=>doTravel(s));
+    map.appendChild(n);
+  }
+
+  const cross=el('sh-cross'); cross.innerHTML='';
+  for(const nb of universe.neighbours()){
+    const b=document.createElement('button');
+    b.textContent=nb.label+'  ('+SECTOR_JUMP+' FUEL)';
+    b.disabled = universe.fuel < SECTOR_JUMP;
+    b.addEventListener('click',()=>{ const r=universe.crossTo(nb);
+      if(r.ok) leaveFor(r.seed); });
+    cross.appendChild(b);
+  }
+
+  const canBuy=Math.floor(sim.hunter.bounty/REFUEL_COST);
+  el('sh-refuel').disabled = canBuy<1 || universe.fuel>=FUEL_MAX;
+  el('sh-fill').disabled   = canBuy<1 || universe.fuel>=FUEL_MAX;
+  el('sh-note').innerHTML = universe.fuel < 20
+    ? '<span class="warn">THE TANK IS NEARLY DRY.</span> Fuel costs '+REFUEL_COST+
+      ' bounty a unit — and bounty comes off the carcass, which is what an honorable kill leaves you least of.'
+    : 'A jump costs fuel; fuel costs bounty. Hunt cleanly and you stay put; butcher and you travel.';
+
+  /* THE FIELD JOURNAL */
+  const rows=Object.values(universe.journal)
+    .sort((a,b)=>(b.visits||0)-(a.visits||0)).slice(0,9);
+  el('jrnl').innerHTML='<b>THE FIELD JOURNAL</b> &nbsp; '+rows.length+' of '+
+    Object.keys(universe.journal).length+' worlds<br>'+
+    rows.map(r=>{
+      const law=r.law?LAWS[r.law].label:'—';
+      return '&middot; '+(r.seed===SEED?'<b>HERE</b> ':'')+law.toLowerCase()+
+        ' &nbsp;'+(r.biome?BIOMES[r.biome].label.toLowerCase():'')+
+        ' &nbsp;<span style="opacity:.6">'+(r.visits||0)+' visits, '+(r.kills||0)+' taken</span>'+
+        (r.nemesis&&r.nemesis.carrying
+          ? ' <span class="nem">— '+r.nemesis.label+' still has your '+
+            kitOwn(r.nemesis.carrying)+'</span>' : '');
+    }).join('<br>');
+}
+
+function doTravel(sys){
+  const r=universe.travel(sys);
+  if(!r.ok){ el('sh-note').innerHTML='<span class="warn">'+
+    (r.reason==='not enough fuel'?'NOT ENOUGH FUEL — that jump needs '+r.cost:r.reason)+
+    '</span>'; return; }
+  leaveFor(r.seed);
+}
+/* ⚠️ commit BEFORE reloading or the jump you just paid for is lost */
+function leaveFor(seed){
+  commitWorld(); saveUniverse();
+  const u=new URL(location.href); u.searchParams.delete('seed'); location.href=u.toString();
+}
+
+/* ============================================================
    THE RECKONING — the view side (M2)
    The sim graded the kill. This only has to make the grade legible, and
    make the two currencies visibly disagree.
@@ -1123,9 +1342,10 @@ let last=performance.now(), spooked=0, frames=0, capMode=false;
    that belongs in a captured frame belongs in here — same contract as
    __ttStep in Age of Toys. */
 function stepFrame(dt, withInput){
-  /* the wake and reckoning cards are modals — the world holds while you read */
+  /* the wake, reckoning and ship screens are modals — the world holds */
   if(wakeOpen){ updateWound(dt); post.update(dt,sim.simSec); drawFrame(); frames++; return; }
   if(reckOpen){ reckT+=dt; post.update(dt,sim.simSec); drawFrame(); frames++; return; }
+  if(shipOpen){ frames++; return; }        // you are not down there at all
   if(withInput) movePlayer(dt); else placeCamera(dt);
   lastPer=sim.step(dt);
   if(lastPer && lastPer.broke){
@@ -1196,6 +1416,8 @@ window.__Q={sim,PROFILES,frames:()=>frames,optic:()=>optic,setOptic,
                       return postOn; },
   fauna:()=>sim.fauna, census:()=>sim.census(), faunaViews, sfx,
   wgen:()=>sim.wgen, law:()=>sim.law, biome:()=>sim.biome,
+  universe, openShip, closeShip, renderShip, shipOpen:()=>shipOpen,
+  commitWorld, seed:SEED,
   assess:()=>sim.assess(optic), reckoning:()=>sim.lastReckoning,
   strike:(o)=>{ const r=sim.strike(o); if(!r.wounded) showReckoning(
     r.overkill?sim.hunter.trophies[sim.hunter.trophies.length-1]:r); return r; },

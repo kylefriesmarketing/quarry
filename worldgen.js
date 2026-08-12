@@ -159,14 +159,48 @@ export const LOCO_KEYS = Object.keys(LOCOMOTION);
 /* ---------- NAMES ---------- */
 const SYL_A = ['kar','vel','oss','thu','mor','gan','sil','dre','hab','nul','pyr','esk',
                'tor','wen','zha','lom','irn','ques','vad','shen'];
+const SYL_MID= ['a','o','en','ir','ua','ys','ae','ol','un','er','ai','yth'];
 const SYL_B = ['ith','ara','oun','esh','ul','oma','iss','ade','orn','ela','ux','ammon',
                'ir','oth','een','usk','al','ynth'];
-const EPITHET = ['the Long','the Pale','the Quiet','the Deep','the Nine','the Hollow',
-                 'the Slow','the Late','the Grey','the Patient','the Wide','the Last'];
 function pick(rng, arr){ return arr[Math.floor(rng()*arr.length)]; }
+
+/* ⚠️ THE NAME SPACE WAS 360 (20 x 18) AND THAT IS NOT ENOUGH. Measured across
+   4000 seeds: every possible name appeared, and 4.5% of worlds shipped TWO
+   SPECIES WITH THE SAME NAME. An optional middle syllable takes it to ~4,700,
+   and generateWorld dedupes within a world on top — a world where two animals
+   share a name is not a world anyone remembers. */
 export function speciesName(rng){
-  let n = pick(rng,SYL_A)+pick(rng,SYL_B);
+  const mid = rng() < 0.45 ? pick(rng,SYL_MID) : '';
+  const n = pick(rng,SYL_A)+mid+pick(rng,SYL_B);
   return n.charAt(0).toUpperCase()+n.slice(1);
+}
+
+/* ---------- THE NAMED ----------
+   §8: procedurally named AND HISTORIED, Caves-of-Qud style — a name, a
+   marking, and a short generated history. One per world at most; most worlds
+   have none. A Named beast the game cannot describe is just a big health bar. */
+const EPITHET = ['the Long','the Pale','the Quiet','the Deep','the Nine','the Hollow',
+                 'the Slow','the Late','the Grey','the Patient','the Wide','the Last',
+                 'the Unfed','the Twice-Struck','the Old Wound','the Untaken'];
+const MARKING = ['a bone-white streak down one flank','a shattered crest, healed crooked',
+                 'one limb shorter than the others','a hide gone grey with age',
+                 'a ring of old scar where something held it','no marking at all, and that is worse',
+                 'a stump where a trophy organ should be','burn-scarring across the back'];
+const DEED    = ['took a hunter\'s arm','broke a blind and everything in it',
+                 'walked out of a ring of fire','killed something it did not eat',
+                 'has been tracked four times and taken none',
+                 'drove an apex off its own kill','outlived the clan that named it',
+                 'was left for dead and was not'];
+const WHEN    = ['two seasons past','a long time ago','last winter','before the charts',
+                 'twice, years apart','within living memory'];
+export function nameTheNamed(rng, biomeKey){
+  const b = BIOMES[biomeKey];
+  return {
+    name: speciesName(rng),
+    epithet: pick(rng, EPITHET),
+    marking: pick(rng, MARKING),
+    history: `${pick(rng,DEED)} at ${b.label.toLowerCase()}, ${pick(rng,WHEN)}.`
+  };
 }
 
 /* ---------- THE SILHOUETTE ----------
@@ -317,6 +351,10 @@ export function generateWorld(seed, rng){
   for(const role of roster){
     const s = generateSpecies(rng, law, biome, role, species);
     s.key = role + '_' + species.length;
+    /* ⚠️ no two animals on one world share a name (measured: 4.5% of worlds
+       did, before this) */
+    let guard=0;
+    while(species.some(e=>e.label===s.label) && guard++<30) s.label = speciesName(rng).toUpperCase();
     species.push(s);
   }
 

@@ -9,7 +9,8 @@
 
 import { trophyScore, bountyValue, gradeMethod, INTEGRITY, TIERS }
   from './scoring.js';
-import { generateWorld, LAWS, BIOMES, ROLES, LOCOMOTION } from './worldgen.js';
+import { generateWorld, nameTheNamed, LAWS, BIOMES, ROLES, LOCOMOTION }
+  from './worldgen.js';
 export * from './scoring.js';
 export * from './worldgen.js';
 
@@ -640,6 +641,10 @@ export function createSim(seed, profileKey='balanced'){
     sim.Q.tier = sp.tier;
     sim.Q.specimenPct = rollSpecimen(world.rng, sp.namedChance);
     sim.Q.gravid = world.rng() < sp.gravidChance;
+    /* §8: THE NAMED are procedurally named AND HISTORIED. A Named beast the
+       game cannot describe is just a bigger health bar. */
+    sim.Q.named = sim.Q.specimenPct >= NAMED_PCT
+      ? nameTheNamed(world.rng, wgen.biome) : null;
   };
 
   /* What you can READ, given where you are and what optic you are using.
@@ -936,6 +941,7 @@ export function createSim(seed, profileKey='balanced'){
     if(!isQ){
       c.specimenPct = rollSpecimen(world.rng, sp.namedChance);
       c.gravid = world.rng() < sp.gravidChance;
+      c.named = c.specimenPct >= NAMED_PCT ? nameTheNamed(world.rng, wgen.biome) : null;
       const lim=WORLD_SIZE*0.47;
       c.x=Math.max(-lim,Math.min(lim,c.x)); c.z=Math.max(-lim,Math.min(lim,c.z));
     }
