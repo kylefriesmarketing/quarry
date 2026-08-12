@@ -204,6 +204,13 @@ export const DOCTRINES = {
 };
 export const DOCTRINE_KEYS = Object.keys(DOCTRINES);
 
+/* Lower a grade to a ceiling. Never raises — a cap is a cap. */
+export function capMethod(method, cap){
+  if(!cap) return method;
+  const have = CAP_ORDER.indexOf(method), lim = CAP_ORDER.indexOf(cap);
+  return (have > lim && lim >= 0) ? cap : method;
+}
+
 /* Apply a doctrine's prohibition to an already-graded kill. Returns either a
    capped method, or a VOID — the doctrine was violated outright. */
 export function applyDoctrine(method, ctx){
@@ -221,6 +228,12 @@ export function trophyScore(o){
   const voided = voidCheck(o);
   const value  = quarryValue(o.tier, o.specimenPct);
   let   method = o.method || gradeMethod(o);
+  /* ⚠️ THE WEAPON CEILING (§10, M8) bites first: the silent, certain thing
+     caps every kill you make with it at CULLING, forever. Buying power is
+     how you buy your standing down. */
+  const beforeWeapon = method;
+  method = capMethod(method, o.weaponCap);
+  const weaponCapped = method !== beforeWeapon;
   /* ⚠️ the doctrine bites AFTER the beast has decided the grade — it can only
      ever take the kill DOWN, never lift it */
   const doc    = applyDoctrine(method, o);
@@ -239,7 +252,7 @@ export function trophyScore(o){
         ? (DOCTRINES[o.doctrine]?.prohibition || VOID_REASONS.doctrine)
         : VOID_REASONS[dead],
     value, method, methodLabel: METHOD[method].label, methodMult: mult,
-    doctrineCapped: !!doc.capped,
+    doctrineCapped: !!doc.capped, weaponCapped,
     band: bandOf(o.specimenPct), condition: cond, repetition: rep,
     score: Math.round(score)
   };

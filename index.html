@@ -180,6 +180,33 @@
         border-top:1px solid rgba(232,200,138,.14);padding-top:9px}
   #jrnl b{color:#cbb389;font-weight:normal}
   #jrnl .nem{color:#c58a5e}
+  /* --- THE MARKET (M8) --- */
+  .sysnode.mkt .sysdot{box-shadow:0 0 14px rgba(143,191,122,.9);background:#8fbf7a}
+  #mkt{position:fixed;inset:0;z-index:62;background:#070606;display:none;
+       flex-direction:column;align-items:center;padding:26px 20px;overflow:auto}
+  #mkt.on{display:flex}
+  #mkt h2{font-size:16px;letter-spacing:.36em;font-weight:normal;color:#c9a578}
+  #mkt .keeper{font-size:10.5px;color:var(--dim);letter-spacing:.16em;
+               margin:5px 0 18px;font-style:italic;text-align:center;max-width:540px;
+               line-height:1.9}
+  #mkt .purse{font-size:10px;color:var(--dim);letter-spacing:.22em;margin-bottom:16px}
+  #mkt .purse b{color:#8fbf7a;font-size:17px}
+  #stock{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;
+         width:min(880px,95vw)}
+  .item{border:1px solid rgba(232,200,138,.2);padding:11px 13px;width:250px;
+        text-align:left;cursor:pointer}
+  .item:hover{border-color:#d9b98a;background:rgba(232,200,138,.06)}
+  .item.cant{opacity:.42;cursor:default}
+  .item .in{font-size:11px;letter-spacing:.18em;color:#e8c88a}
+  .item .ip{font-size:10px;color:#8fbf7a;float:right}
+  .item .io{font-size:9.5px;color:#b9a37e;line-height:1.7;margin-top:5px;clear:both}
+  .item .iw{font-size:9px;color:var(--warn);margin-top:5px;line-height:1.6}
+  #mkt .note{font-size:9.5px;color:var(--dim);letter-spacing:.14em;margin-top:14px;
+             text-align:center;max-width:600px;line-height:1.85}
+  #mkt button{background:none;color:#d9b98a;border:1px solid rgba(232,200,138,.3);
+    font-family:inherit;font-size:10px;letter-spacing:.16em;padding:9px 16px;
+    cursor:pointer;margin-top:16px}
+  #mkt button:hover{border-color:#d9b98a;background:rgba(232,200,138,.07)}
   /* --- THE HALL (M9) + DOCTRINES (M7) --- */
   #hall{position:fixed;inset:0;z-index:61;background:#06070a;display:none;
         flex-direction:column;align-items:center;padding:24px 20px;overflow:auto}
@@ -341,6 +368,16 @@
   </div>
   <div id="jrnl"></div>
 </div>
+<div id="mkt">
+  <h2 id="mk-name">—</h2>
+  <div class="keeper" id="mk-keeper">—</div>
+  <div class="purse">BOUNTY <b id="mk-purse">0</b> &nbsp;·&nbsp;
+    CARRYING <b id="mk-primary" style="color:#e8c88a">—</b></div>
+  <div id="stock"></div>
+  <div class="note" id="mk-note">Optics, reeds, bindings and surgery cost you nothing
+    but money. A weapon costs you the top of the table.</div>
+  <button id="mk-leave">UNDOCK</button>
+</div>
 <div id="retic"></div><div id="msg"></div><div id="blood"></div>
 <div id="grain"></div><div id="scan"></div><div id="vig"></div>
 
@@ -359,6 +396,7 @@ import {createPost} from './post.js';
 import {createSfx} from './sfx.js';
 import {loadUniverse, packHunter, unpackHunter, jumpCost,
         FUEL_MAX, REFUEL_COST, SECTOR_JUMP} from './universe.js';
+import {WEAPONS, GEAR, merchantFor, priceOf, canBuy, buy} from './market.js';
 
 const el=id=>document.getElementById(id);
 const ERR=document.getElementById('err');
@@ -945,6 +983,7 @@ addEventListener('keydown',e=>{ keys[e.code]=true;
   if(reckOpen){ if(e.code==='Space'||e.code==='Enter') dismissReckoning(); return; }
   if(e.code==='Tab'){ e.preventDefault(); shipOpen?closeShip():openShip(); return; }
   if(shipOpen){ if(e.code==='Escape') closeShip(); return; }
+  if(mktOpen){ if(e.code==='Escape') closeMarket(); return; }
   if(e.code==='KeyH'){ hallOpen?closeHall():openHall(); return; }
   if(hallOpen){ if(e.code==='Escape') closeHall(); return; }
   if(e.code==='Digit1')tryOptic(0,null);
@@ -970,6 +1009,7 @@ el('reck').addEventListener('click',()=>{ if(dismissReckoning())
   renderer.domElement.requestPointerLock(); });
 el('shipbtn').addEventListener('click',e=>{ e.stopPropagation(); openShip(); });
 el('hallbtn').addEventListener('click',e=>{ e.stopPropagation(); openHall(); });
+el('mk-leave').addEventListener('click',()=>closeMarket());
 el('hl-back').addEventListener('click',()=>{ closeHall();
   renderer.domElement.requestPointerLock(); });
 el('sh-back').addEventListener('click',()=>{ closeShip();
@@ -1225,7 +1265,7 @@ function swingBlade(){
     const t=step/5*BLADE_REACH;
     hit=creatureHit(p.x+dir.x*t, eyeY+dir.y*t, p.z+dir.z*t);
   }
-  if(hit) resolveHit(hit, 'body', true);
+  if(hit) resolveHit(hit, 'body', true, 'blade');   // the blade never caps you
   else flash('YOU CUT AIR');
 }
 function updateBlade(dt){
@@ -1276,10 +1316,10 @@ function creatureHit(px,py,pz){
 }
 
 /* the ONE place a hit becomes a Reckoning, for spear and blade alike */
-function resolveHit(hit, part, thrown){
+function resolveHit(hit, part, thrown, weapon){
   const c=hit.c;
   const dist=Math.hypot(sim.player.x-c.x, sim.player.z-c.z);
-  const rec=sim.strike({dist, part, thrown, target:c});
+  const rec=sim.strike({dist, part, thrown, target:c, weapon});
   if(rec.overkill){
     flash('YOU STRIKE A DEAD THING — THE TROPHY IS VOID');
     showReckoning(sim.hunter.trophies[sim.hunter.trophies.length-1]);
@@ -1304,7 +1344,8 @@ function updateSpears(dt){
          are no health bars; you read the body. */
       const part = s.p.y > hit.headY ? 'skull' : 'body';
       s.mesh.visible=false; flying.splice(i,1);
-      resolveHit(hit, part, true);
+      /* thrown by your PRIMARY — an energy weapon caps this at Culling */
+      resolveHit(hit, part, true, sim.hunter.primary||'spears');
       continue;
     }
     const Q=sim.Q;
@@ -1535,20 +1576,34 @@ function renderShip(){
     const cost = s.idx===universe.at.idx ? 0 : jumpCost(here,s);
     const known = universe.known(s.seed);
     const reach = cost<=universe.fuel;
+    const mk=merchantFor(s.seed);
     const n=document.createElement('div');
     n.className='sysnode'+(s.idx===universe.at.idx?' here':known?' known':'')+
-                (reach||s.idx===universe.at.idx?'':' far');
+                (reach||s.idx===universe.at.idx?'':' far')+(mk&&known?' mkt':'');
     n.style.left=s.x+'%'; n.style.top=s.y+'%';
     const je=universe.entry(s.seed);
     n.innerHTML='<div class="sysdot"></div><div class="sysname">'+s.name+'</div>'+
       '<div class="syssub">'+(s.idx===universe.at.idx ? 'YOU ARE HERE'
         : (known ? LAWS[je.law].label.replace(/^(EVERYTHING|NOTHING)\s/,'')+'<br>' : 'UNCHARTED<br>')
-          + cost+' FUEL')+'</div>';
+          + cost+' FUEL')+
+      /* ⚠️ a merchant is only VISIBLE on a charted system — you have to have
+         been there to know there is a hulk in orbit */
+      (mk&&known?'<div class="syssub" style="color:#8fbf7a">'+mk.name+'</div>':'')+
+      '</div>';
     if(s.idx!==universe.at.idx) n.addEventListener('click',()=>doTravel(s));
     map.appendChild(n);
   }
 
+  /* a hulk in orbit HERE is a place you can dock at */
+  const hereMk=merchantFor(SEED);
   const cross=el('sh-cross'); cross.innerHTML='';
+  if(hereMk){
+    const b=document.createElement('button');
+    b.textContent='⚓ DOCK AT '+hereMk.name;
+    b.style.borderColor='rgba(143,191,122,.55)'; b.style.color='#8fbf7a';
+    b.addEventListener('click',()=>openMarket(hereMk));
+    cross.appendChild(b);
+  }
   for(const nb of universe.neighbours()){
     const b=document.createElement('button');
     b.textContent=nb.label+'  ('+SECTOR_JUMP+' FUEL)';
@@ -1580,6 +1635,54 @@ function renderShip(){
           ? ' <span class="nem">— '+r.nemesis.label+' still has your '+
             kitOwn(r.nemesis.carrying)+'</span>' : '');
     }).join('<br>');
+}
+
+/* ============================================================
+   THE MARKET (M8) — a merchant is a PLACE you dock at, not a menu you open.
+   It sits on a system, it has a name and a keeper, its prices drift, and it
+   is still there when you come back.
+   ============================================================ */
+let mktOpen=false, mktHere=null;
+function openMarket(m){
+  mktHere=m; mktOpen=true; el('mkt').classList.add('on'); renderMarket();
+}
+function closeMarket(){ mktOpen=false; el('mkt').classList.remove('on');
+  commitWorld(); if(shipOpen) renderShip(); }
+
+function renderMarket(){
+  const H=sim.hunter, m=mktHere;
+  el('mk-name').textContent=m.name;
+  el('mk-keeper').textContent=m.keeper +
+    (m.refusesBadBlood ? ' — and a look that says they keep company carefully.' : '.');
+  el('mk-purse').textContent=Math.round(H.bounty);
+  el('mk-primary').textContent=(WEAPONS[H.primary]||WEAPONS.spears).label;
+
+  el('stock').innerHTML=m.stock.map(k=>{
+    const it=WEAPONS[k]||GEAR[k], q=canBuy(H,k,m), price=priceOf(k,m);
+    const capWarn = WEAPONS[k] && WEAPONS[k].cap
+      ? '⚠ CAPS EVERY KILL AT '+WEAPONS[k].cap.toUpperCase() : '';
+    return '<div class="item'+(q.ok?'':' cant')+'" data-k="'+k+'">'+
+      '<span class="ip">'+price+'</span><span class="in">'+it.label+'</span>'+
+      '<div class="io">'+it.note+'</div>'+
+      (capWarn?'<div class="iw">'+capWarn+'</div>':'')+
+      (q.ok?'':'<div class="iw">'+q.why+'</div>')+'</div>';
+  }).join('');
+
+  for(const node of el('stock').querySelectorAll('.item')){
+    const k=node.dataset.k;
+    if(!canBuy(H,k,m).ok) continue;
+    node.addEventListener('click',()=>{
+      const r=buy(H,k,m);
+      if(!r.ok){ el('mk-note').textContent=r.why; return; }
+      /* a bought weapon becomes your primary — one primary plus your blades */
+      if(r.kind==='weapon' && WEAPONS[k].cls!=='blade') H.primary=k;
+      if(k==='tank') universe.fuelMax=(universe.fuelMax||100)+60;
+      el('mk-note').innerHTML = r.kind==='medical'
+        ? 'The keeper works on you in silence. Something closes.'
+        : 'Yours. <span style="opacity:.6">'+r.price+' bounty.</span>';
+      commitWorld(); renderMarket();
+    });
+  }
 }
 
 function doTravel(sys){
@@ -1747,7 +1850,7 @@ function stepFrame(dt, withInput){
   /* the wake, reckoning and ship screens are modals — the world holds */
   if(wakeOpen){ updateWound(dt); post.update(dt,sim.simSec); drawFrame(); frames++; return; }
   if(reckOpen){ reckT+=dt; post.update(dt,sim.simSec); drawFrame(); frames++; return; }
-  if(shipOpen||hallOpen){ frames++; return; }   // you are not down there at all
+  if(shipOpen||hallOpen||mktOpen){ frames++; return; }  // not down there at all
   if(withInput) movePlayer(dt); else placeCamera(dt);
   lastPer=sim.step(dt);
   if(lastPer && lastPer.broke){
@@ -1820,6 +1923,8 @@ window.__Q={sim,PROFILES,frames:()=>frames,optic:()=>optic,setOptic,
   wgen:()=>sim.wgen, law:()=>sim.law, biome:()=>sim.biome,
   universe, openShip, closeShip, renderShip, shipOpen:()=>shipOpen,
   openHall, closeHall, renderHall, hallOpen:()=>hallOpen,
+  openMarket, closeMarket, renderMarket, mktOpen:()=>mktOpen,
+  merchantHere:()=>merchantFor(SEED),
   commitWorld, seed:SEED,
   assess:()=>sim.assess(optic), reckoning:()=>sim.lastReckoning,
   strike:(o)=>{ const r=sim.strike(o); if(!r.wounded) showReckoning(

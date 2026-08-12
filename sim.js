@@ -9,6 +9,8 @@
 
 import { trophyScore, bountyValue, gradeMethod, INTEGRITY, TIERS,
          standing, rankOf, RANKS, DOCTRINES } from './scoring.js';
+import { weaponCap } from './market.js';
+export * from './market.js';
 import { generateWorld, nameTheNamed, LAWS, BIOMES, ROLES, LOCOMOTION }
   from './worldgen.js';
 export * from './scoring.js';
@@ -323,6 +325,8 @@ export function createSim(seed, profileKey='balanced'){
          teach wind and stillness instead of handing you the crutch first. */
       kit:{ spears:true, blade:true, thermal:true, pheromone:true, cloak:false },
       standing:0, everHadCloak:false,
+      /* M8: one primary plus your blades. Swapping means going to the ship. */
+      primary:'spears', gear:{}, badBlood:false,
       injuries:{}, breaks:0, scars:0, scarCredit:0, lastBreak:null, taken:[],
       bleed:0,          // seconds of open wound remaining
       bleeds:0,         // how many times you have been opened up
@@ -678,7 +682,8 @@ export function createSim(seed, profileKey='balanced'){
      animals on screen were invulnerable scenery — you could put a spear
      straight through one and nothing happened. (Kyle found this by playing;
      no test caught it because every test struck the quarry.) */
-  sim.strike = function({dist, part='body', thrown=true, lethal=true, target=null}){
+  sim.strike = function({dist, part='body', thrown=true, lethal=true, target=null,
+                         weapon=null}){
     const Q=target||sim.Q, H=sim.hunter, sp=sim.species[Q.species];
     if(!Q.alive){
       /* OVERKILL — going on striking a dead thing. Recorded, and it voids. */
@@ -715,6 +720,8 @@ export function createSim(seed, profileKey='balanced'){
       doctrine:H.doctrine, species:Q.species,
       /* VOKAAR caps a fleeing kill at Clean; KRAHN voids it outright */
       fleeing: Q.state==='FLEE' || Q.alertState==='SPOOKED',
+      /* M8: the weapon in your hand sets the ceiling. The blade never caps. */
+      weaponCap: weaponCap(H, weapon || (thrown ? (H.primary||'spears') : 'blade')),
       integrity: part==='skull' ? INTEGRITY.skull
                : part==='body'  ? INTEGRITY.clean : INTEGRITY.bodyDamage,
       party:1, consecutive:run,
@@ -888,6 +895,8 @@ export function createSim(seed, profileKey='balanced'){
                  ?{options:[...sim.hunter.pendingLoss.options]}:null,
                doctrine:sim.hunter.doctrine, honor:sim.hunter.honor,
                standing:sim.hunter.standing, everHadCloak:sim.hunter.everHadCloak,
+               primary:sim.hunter.primary, gear:{...sim.hunter.gear},
+               badBlood:sim.hunter.badBlood,
                bounty:sim.hunter.bounty, voids:sim.hunter.voids,
                gaveGround:sim.hunter.gaveGround,
                trophies:JSON.parse(JSON.stringify(sim.hunter.trophies)),
@@ -917,6 +926,9 @@ export function createSim(seed, profileKey='balanced'){
     sim.hunter.doctrine=s.hunter.doctrine;
     sim.hunter.standing=s.hunter.standing||0;
     sim.hunter.everHadCloak=!!s.hunter.everHadCloak;
+    sim.hunter.primary=s.hunter.primary||'spears';
+    sim.hunter.gear={...(s.hunter.gear||{})};
+    sim.hunter.badBlood=!!s.hunter.badBlood;
     sim.hunter.honor=s.hunter.honor||0; sim.hunter.bounty=s.hunter.bounty||0;
     sim.hunter.voids=s.hunter.voids||0;
     sim.hunter.gaveGround=!!s.hunter.gaveGround;
