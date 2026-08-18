@@ -168,6 +168,31 @@ export const CONTACT_R    = 2.4;
 export const OBSERVE_RANGE= 70;    // close enough (with LOS) to be OBSERVING it
 export const GROUND_GIVEN = 2.0;   // metres of retreat that count as giving ground
 
+/* ============================================================
+   LOCATED WOUNDS (§3) — the half of the hunt that was missing.
+   "No health bars, ever. Wounds are located and simulated. A leg changes
+   gait and shortens flight. You read the body."
+
+   ⚠️ NOT EVERY HIT KILLS, and that is the entire tracking game. Skull and
+   vitals drop it where it stands. A GUT hit starts a long bleed — dark,
+   sparse blood, and the beast dies somewhere ahead of you. A LEG hit
+   cripples it: it survives, clots, and remembers you.
+   The trophy is graded AT THE WOUND that proves mortal, and you only bank
+   it when you FIND the carcass — lose the trail, or let a scavenger reach
+   it first, and §5's void applies: something else finished your quarry.
+   ============================================================ */
+export const WOUNDS = {
+  gut: { bleed:0.010, sev:0.55,
+         tell:'DARK BLOOD — THIS WILL TAKE TIME' },
+  leg: { bleed:0.0035, sev:1.0, clotAt:0.62, cripple:0.55,
+         tell:'ITS LEG — IT CANNOT RUN FAR NOW' }
+};
+export const BED_AT    = 0.35;  // blood fraction at which it lies down
+export const BED_DIE_T = 45;    // seconds bedded before it dies
+export const BLOOD_MAX = 240;   // blood-sign cap
+export const CLAIM_R   = 3.0;   // walk up to the carcass to claim it
+export const SCAVENGE_LOSS = 25;// seconds of feeding before the trophy is gone
+
 /* ⚠️ TWO TIERS: BLEEDING, THEN BROKEN (Kyle, 2026-08-11).
    The first strike does NOT end the hunt. It opens you up: you bleed, you are
    louder and slower, and the beast stays and is now in a fight with you. A
@@ -212,17 +237,77 @@ export function createWorld(seed){
   const {fbm} = makeNoise(rng);
   const heights = new Float32Array(GRID*GRID);
 
+  /* ⚠️ THE LANDFORM IS PER-WORLD NOW. The basin and the ridge used to be
+     HARDCODED — every world in an "endless universe" was the same land with
+     different bumps: lake always at (0.30, 0.68), ridge always on the same
+     diagonal. Macro structure is drawn from the world's own rng: where the
+     water is, which way the high ground runs, whether there is a second
+     crest or a mound. Worlds have different SHAPES now, not just different
+     noise. (This shifts the rng stream — a deliberate one-time break.) */
+  const M = {
+    bx: 0.22+rng()*0.56, by: 0.22+rng()*0.56,
+    bdepth: 5.8+rng()*2.0, bwide: 8+rng()*6,
+    ra: rng()*Math.PI, rc: 0.35+rng()*0.5,
+    ramp: 3.2+rng()*1.3, rwide: 90+rng()*120,
+    ridge2: rng()<0.5, r2a: rng()*Math.PI, r2c: 0.30+rng()*0.6,
+    r2amp: 2.0+rng()*1.4, r2wide: 90+rng()*140,
+    mound: rng()<0.6, mx: 0.25+rng()*0.5, my: 0.25+rng()*0.5,
+    mamp: 1.2+rng()*2.0
+  };
+  const rca=Math.cos(M.ra), rsa=Math.sin(M.ra);
+  const r2ca=Math.cos(M.r2a), r2sa=Math.sin(M.r2a);
+
   function genHeight(i,j){
     const x=i/GRID, y=j/GRID;
     let h = fbm(x*2.4, y*2.4, 5)*7.0;
     h += fbm(x*6.1+11.3, y*6.1-4.7, 3)*1.7;
-    const dx=x-0.30, dy=y-0.68;
-    h -= Math.exp(-(dx*dx+dy*dy)*11.0)*6.4;          // basin -> water
-    const rd = Math.abs((x*0.72+y*0.68) - 0.86);
-    h += Math.exp(-rd*rd*140)*3.4;                    // ridge -> cover & vantage
+    const dx=x-M.bx, dy=y-M.by;
+    h -= Math.exp(-(dx*dx+dy*dy)*M.bwide)*M.bdepth;   // basin -> water
+    const rd = Math.abs(x*rca + y*rsa - M.rc);
+    h += Math.exp(-rd*rd*M.rwide)*M.ramp;             // ridge -> cover & vantage
+    if(M.ridge2){
+      const r2 = Math.abs(x*r2ca + y*r2sa - M.r2c);
+      h += Math.exp(-r2*r2*M.r2wide)*M.r2amp;
+    }
+    if(M.mound){
+      const mx=x-M.mx, my=y-M.my;
+      h += Math.exp(-(mx*mx+my*my)*26)*M.mamp;
+    }
     return h+3.0;
   }
   for(let j=0;j<GRID;j++) for(let i=0;i<GRID;i++) heights[j*GRID+i]=genHeight(i,j);
+
+  /* ⚠️ THE ZONE GUARANTEES ARE NON-NEGOTIABLE. findZone falls back to an
+     arbitrary sample when its predicate never matches, so a world with no
+     shoreline gets a "water zone" on dry land and the whole schedule game
+     silently rots. Enforce by construction: SOMEWHERE must be underwater,
+     and SOMEWHERE must be bed-height. Deterministic post-fix, not a reroll. */
+  {
+    /* ⚠️ only the INTERIOR counts — findZone samples ±0.4·WORLD, so a crest
+       raised in the outer margin satisfies the max and helps nobody. 6 of 50
+       seeds shipped bed zones at y=-2 that way. */
+    let min=1e9,max=-1e9,argMax=0,argMin=0;
+    const lo=(GRID*0.14)|0, hi=(GRID*0.86)|0;
+    for(let j=lo;j<hi;j++) for(let i=lo;i<hi;i++){
+      const k=j*GRID+i;
+      if(heights[k]<min){min=heights[k];argMin=k;}
+      if(heights[k]>max){max=heights[k];argMax=k;}
+    }
+    if(min > WATER_Y-0.5){          // no real water: deepen the basin
+      const need=(min-(WATER_Y-0.5)), ci=argMin%GRID, cj=(argMin/GRID)|0;
+      for(let j=0;j<GRID;j++) for(let i=0;i<GRID;i++){
+        const dx=(i-ci)/GRID, dy=(j-cj)/GRID;
+        heights[j*GRID+i] -= Math.exp(-(dx*dx+dy*dy)*10)*(need+0.8);
+      }
+    }
+    if(max < 6.6){                   // no high ground: raise the crest
+      const need=6.9-max, ci=argMax%GRID, cj=(argMax/GRID)|0;
+      for(let j=0;j<GRID;j++) for(let i=0;i<GRID;i++){
+        const dx=(i-ci)/GRID, dy=(j-cj)/GRID;
+        heights[j*GRID+i] += Math.exp(-(dx*dx+dy*dy)*30)*need;
+      }
+    }
+  }
 
   function heightAt(wx,wz){
     const fx=(wx/WORLD_SIZE+0.5)*(GRID-1), fz=(wz/WORLD_SIZE+0.5)*(GRID-1);
@@ -319,7 +404,10 @@ export function createSim(seed, profileKey='balanced'){
       quarryInitiated:false,  // it started it (KRAHN)
       quarryDisengaged:false, // ...and then tried to leave
       cycleSeen:{},           // OSSUN: feed / drink / bed, observed
-      assessed:false          // have you read it through an optic yet
+      assessed:false,         // have you read it through an optic yet
+      /* located wounds: blood is vitality 1→0; wound carries the pending
+         reckoning, graded at the moment the mortal hit landed */
+      blood:1, bleedRate:0, wound:null, dieT:0, lastBlood:0
     },
     /* THE HUNTER — the only thing that persists across a failed hunt.
        You begin WITHOUT a cloak in the fiction (Badlands: it is earned);
@@ -348,6 +436,7 @@ export function createSim(seed, profileKey='balanced'){
       lastApproach:{}, approachRun:{}
     },
     tracks: [],
+    blood: [],                 // the other kind of sign: {x,z,age,sev}
     frame: 0
   };
   /* where you wake when you are broken */
@@ -491,7 +580,11 @@ export function createSim(seed, profileKey='balanced'){
     Q.z=Math.max(-lim0,Math.min(lim0,Q.z));
     /* a CHARGING quarry keeps updating even though it has already decided to
        leave - it is leaving through you */
+    /* the wound clock runs even on a beast that has "left" — it cannot
+       outrun its own blood, and the trail leads to wherever it fell */
+    sim.tickWound(Q, dt);
     if(!Q.alive || (Q.gone && !Q.charging)) return;
+    if(Q.state==='BEDDED'){ Q.speed=0; return; }
     Q.stateT+=dt;
 
     const noise = sim.playerNoise(dt);
@@ -593,7 +686,13 @@ export function createSim(seed, profileKey='balanced'){
       const ax=Q.x-p.x, az=Q.z-p.z, l=Math.hypot(ax,az)||1;
       tx=Q.x+ax/l*30; tz=Q.z+az/l*30; spd=7.5;
       if(Q.stateT>4.5){ Q.state='TRAVEL'; Q.stateT=0; }
+    } else if(Q.curious && Q.alertState==='CALM'){
+      /* investigating your call — every sense still live the whole way in */
+      Q.curious.t-=dt;
+      tx=Q.curious.x; tz=Q.curious.z; spd=1.6; Q.state='TRAVEL';
+      if(Q.curious.t<=0 || Math.hypot(Q.x-tx,Q.z-tz)<6) Q.curious=null;
     } else {
+      if(Q.alertState!=='CALM') Q.curious=null;   // spooked mid-approach
       const want=sim.zoneForTime();
       tx=want.z.x; tz=want.z.z;
       const dz=Math.hypot(Q.x-tx,Q.z-tz);
@@ -604,6 +703,13 @@ export function createSim(seed, profileKey='balanced'){
         tx += Math.sin(sim.simSec*0.05+Q.x)*5;
         tz += Math.cos(sim.simSec*0.043+Q.z)*5;
       }
+    }
+    /* ⚠️ THE WOUND IS IN THE MOVEMENT EQUATION, not an icon. A crippled leg
+       is a hard cap; blood loss drains the rest. "A leg changes gait and
+       shortens flight" — you can literally watch it slow down. */
+    if(Q.wound){
+      if(Q.wound.part==='leg') spd *= WOUNDS.leg.cripple;
+      spd *= 0.45 + 0.55*Q.blood;
     }
     const dx=tx-Q.x, dz2=tz-Q.z, L=Math.hypot(dx,dz2);
     if(L>0.4){
@@ -637,6 +743,8 @@ export function createSim(seed, profileKey='balanced'){
     sim.updateWind(dt);
     const per = sim.updateQuarry(dt);
     sim.updateFauna(dt);          // the rest of the web, watched or not
+    sim.updateClaims();
+    for(const b of sim.blood) b.age += dt;
     const clanBroke = sim.updateClan(dt);
     const colBroke  = sim.updateColony(dt);
     if(per) per.broke = per.broke || clanBroke || colBroke;
@@ -708,13 +816,14 @@ export function createSim(seed, profileKey='balanced'){
       return {overkill:true};
     }
     Q.strikes++;
+    /* legacy alias: 'body' always meant a placed chest hit */
+    if(part==='body') part='vitals';
     if(!lethal) return {wounded:true, strikes:Q.strikes};
 
-    /* ⚠️ capture what was TRUE at the moment of the strike before killing it —
-       VOKAAR's rite is "it was coming at you", and clearing the flag first
-       would silently make the highest grade in the game unreachable. */
+    /* ⚠️ capture what was TRUE at the moment of the strike before anything
+       changes — VOKAAR's rite is "it was coming at you", and clearing the
+       flag first would silently make the highest grade unreachable. */
     const wasCharging = Q.charging || Q.state==='CHARGE';
-    Q.alive=false; Q.charging=false;
 
     const approach = gradeApproach(dist, sim.player.cloaked, Q);
     const run = (H.lastApproach[Q.species]===approach) ? (H.approachRun[Q.species]||0) : 0;
@@ -729,20 +838,46 @@ export function createSim(seed, profileKey='balanced'){
       cycleObserved: !!(Q.cycleSeen.GRAZE && Q.cycleSeen.DRINK && Q.cycleSeen.BED),
       inBeddingGround: Math.hypot(Q.x-world.zones.bed.x, Q.z-world.zones.bed.z) < 14,
       doctrine:H.doctrine, species:Q.species,
-      /* VOKAAR caps a fleeing kill at Clean; KRAHN voids it outright */
-      fleeing: Q.state==='FLEE' || Q.alertState==='SPOOKED',
+      /* VOKAAR caps a fleeing kill at Clean; KRAHN voids it outright.
+         ⚠️ a BEDDED beast is not fleeing — it is dying, and finishing it
+         there is the merciful end KRAHN's code allows */
+      fleeing: (Q.state==='FLEE' || Q.alertState==='SPOOKED') && Q.state!=='BEDDED',
       /* M8: the weapon in your hand sets the ceiling. The blade never caps. */
       weaponCap: weaponCap(H, weapon || (thrown ? (H.primary||'spears') : 'blade')),
       /* M11/§5: witnessed by the unworthy, and you did not break contact */
       witnessed: H.witnessed,
       integrity: part==='skull' ? INTEGRITY.skull
-               : part==='body'  ? INTEGRITY.clean : INTEGRITY.bodyDamage,
+               : part==='vitals' ? INTEGRITY.clean : INTEGRITY.bodyDamage,
       party:1, consecutive:run,
       gravid:Q.gravid, noThreat: sp.threat<=0
     };
-    /* ⚠️ wasCharging must be read BEFORE we clear it above — recompute here
-       from the state we captured, not from the now-cleared flag. */
-    ctx.wasCharging = Q.state==='CHARGE';
+
+    /* repetition is committed at the STRIKE, kill or wound — you took the
+       approach either way, and a reload must not launder it */
+    H.lastApproach[Q.species]=approach;
+    H.approachRun[Q.species]=run+1;
+
+    /* ============================================================
+       ⚠️ NOT EVERY HIT KILLS (§3). Gut and leg are WOUNDS: the beast runs,
+       bleeding, and the tracking game begins. The trophy is graded NOW —
+       at the moment of the hit — but banked only when you find the body.
+       ============================================================ */
+    if(part==='gut' || part==='leg'){
+      const W_=WOUNDS[part];
+      Q.wound = Q.wound || { part, at:sim.simSec, ctx:null, approach };
+      Q.wound.part = part;
+      Q.bleedRate = (Q.bleedRate||0) + W_.bleed;
+      /* only a wound that can kill carries a pending reckoning */
+      if(part==='gut') Q.wound.ctx = {...ctx};
+      /* it runs, and it knows exactly what did this to it */
+      Q.everAware=true; Q.awareness=1; Q.alertState='SPOOKED';
+      Q.state='FLEE'; Q.stateT=0; Q.charging=false;
+      if(Q===sim.Q) Q.spooks=Math.max(Q.spooks,1);
+      return { wounded:true, part, strikes:Q.strikes, tell:W_.tell };
+    }
+
+    /* skull / vitals: it drops where it stands */
+    Q.alive=false; Q.charging=false;
 
     const rec = trophyScore(ctx);
     /* ⚠️ Bounty is NOT zeroed by the Void. A butcher still gets paid — that
@@ -751,14 +886,23 @@ export function createSim(seed, profileKey='balanced'){
     rec.species = sp.label; rec.approach = approach;
     rec.at = sim.simSec; rec.dist = dist; rec.part = part;
 
-    H.lastApproach[Q.species]=approach;
-    H.approachRun[Q.species]=run+1;
+    sim.bankTrophy(rec);
+    return rec;
+  };
+
+  /* ============================================================
+     ⚠️ ONE FUNNEL FOR EVERY TROPHY — a kill in the open and a carcass
+     claimed at the end of a blood trail must move standing, disgrace and
+     the cloak grant IDENTICALLY, or the two paths drift apart.
+     ============================================================ */
+  sim.bankTrophy = function(rec){
+    const H=sim.hunter;
     H.honor += rec.score;
-    H.bounty += rec.bounty;
+    H.bounty += rec.bounty||0;
     if(rec.voided) H.voids++;
     H.trophies.push(rec);
     sim.lastReckoning = rec;
-    /* M9: standing is a ROLLING AVERAGE, so it moves both ways on every kill */
+    /* M9: standing is a ROLLING AVERAGE, so it moves both ways every time */
     rec.standingBefore = H.standing || 0;
     H.standing = standing(H.trophies);
     rec.standingAfter = H.standing;
@@ -770,12 +914,7 @@ export function createSim(seed, profileKey='balanced'){
     H.fall = f.key; H.badBlood = !!f.hunted;
     rec.disgrace = H.disgrace; rec.fall = f;
     if(f.key !== fellBefore) rec.fellTo = f;
-    /* THE CLOAK IS EARNED (§10). Granted at ELDER, as recognition — and a
-       VOKAAR never gets one, because the hardware is not in their mask. */
-    /* ⚠️ compare against the THRESHOLD, not the current rank. A big enough
-       first trophy vaults you straight past ELDER to CLAN LORD, and a check
-       for `rank.grants === 'cloak'` would silently never fire — you would
-       outrank the reward and never receive it. */
+    /* THE CLOAK IS EARNED (§10) — threshold, not rank (see M9 notes) */
     const d = DOCTRINES[H.doctrine];
     const elder = RANKS.find(r=>r.grants==='cloak');
     if(elder && H.standing >= elder.at && !H.kit.cloak && !H.everHadCloak
@@ -783,6 +922,32 @@ export function createSim(seed, profileKey='balanced'){
       H.kit.cloak = true; H.everHadCloak = true; rec.granted = 'cloak';
     }
     return rec;
+  };
+
+  /* ============================================================
+     THE CLAIM. A beast that died of your wound is only a trophy once you
+     STAND OVER IT — and §5's void is live the whole walk: "letting something
+     else finish your quarry" scores zero.
+     ============================================================ */
+  sim.updateClaims = function(){
+    const p=sim.player;
+    for(const k of sim.carrion){
+      if(!k.claim) continue;
+      const sp=sim.species[k.species];
+      if((k.eaten||0) > SCAVENGE_LOSS){
+        /* something else got there first */
+        const rec=trophyScore({...k.claim.ctx, scavenged:true});
+        rec.bounty=0; rec.species=sp?sp.label:'—';
+        rec.at=sim.simSec; rec.trailed=true;
+        sim.bankTrophy(rec); sim.claimed=rec; k.claim=null;
+      } else if(Math.hypot(k.x-p.x, k.z-p.z) < CLAIM_R){
+        const rec=trophyScore(k.claim.ctx);
+        rec.bounty=bountyValue({...k.claim.ctx, method:rec.method});
+        rec.species=sp?sp.label:'—';
+        rec.at=sim.simSec; rec.trailed=true;
+        sim.bankTrophy(rec); sim.claimed=rec; k.claim=null; k.claimed=true;
+      }
+    }
   };
 
   /* Which of the five approaches (§5) did you actually take? Read, not chosen. */
@@ -936,7 +1101,14 @@ export function createSim(seed, profileKey='balanced'){
         people: sim.colony.people.map(q=>({...q, home:{...q.home}})),
         alarm:sim.colony.alarm } : null,
       witnessT: sim.witnessT, unseenT: sim.unseenT,
-      clan: sim.clan ? {...sim.clan} : null
+      clan: sim.clan ? {...sim.clan} : null,
+      /* ⚠️ fauna were NEVER saved — a latent invariant-3 hole that only
+         stayed invisible because the fingerprint doesn't hash them. Wounds
+         made it visible: a bleeding beast has to still be bleeding, in the
+         same place, after a reload. Blood sign and carrion ride along. */
+      fauna: sim.fauna.map(f=>({...f})),
+      blood: sim.blood.map(b=>({...b})),
+      carrion: sim.carrion.map(k=>({...k}))
     });
   };
   sim.restoreState = function(json){
@@ -978,7 +1150,31 @@ export function createSim(seed, profileKey='balanced'){
       alarm:s.colony.alarm } : null;
     sim.witnessT = s.witnessT||0; sim.unseenT = s.unseenT||0;
     sim.clan = s.clan ? {...s.clan} : null;
+    if(s.fauna){
+      sim.fauna = s.fauna.map(f=>({...f}));
+      /* fauna[0] IS the quarry — keep the alias true after a load */
+      Object.assign(sim.Q, sim.fauna[0]); sim.fauna[0]=sim.Q;
+    }
+    if(s.blood)   sim.blood   = s.blood.map(b=>({...b}));
+    if(s.carrion) sim.carrion = s.carrion.map(k=>({...k}));
     return sim;
+  };
+
+  /* ============================================================
+     THE CALL (§3) — "honorable; a call does not remove the beast's chance
+     to detect you." Sold as CALL REEDS in the market since M8, with nothing
+     behind them until now. A CALM quarry in earshot drifts toward the sound
+     to investigate — with every sense still working. You are inviting the
+     thing that can kill you to come closer. That is the whole deal.
+     ============================================================ */
+  sim.callQuarry = function(){
+    const Q=sim.Q, p=sim.player;
+    if(!Q.alive || Q.gone) return {answered:false, why:'nothing to hear it'};
+    const d=Math.hypot(Q.x-p.x, Q.z-p.z);
+    if(d>140) return {answered:false, why:'too far'};
+    if(Q.alertState!=='CALM') return {answered:false, why:'it is not fooled'};
+    Q.curious={x:p.x, z:p.z, t:26};
+    return {answered:true, d};
   };
 
   /* skip to the next phase. The world does NOT pause. */
@@ -1018,6 +1214,7 @@ export function createSim(seed, profileKey='balanced'){
       everAware:false, strikes:0, drewBlood:false, wary:0, carrying:null,
       quarryInitiated:false, quarryDisengaged:false, cycleSeen:{},
       charging:false, chargeAim:0, assessed:false, riseFilter:0,
+      blood:1, bleedRate:0, wound:null, dieT:0, lastBlood:0,
       /* ⚠️ below the 0.35 hunt threshold on purpose — spawning a predator
          already hungry meant the world opened with a kill on frame one */
       target:null, hunger:world.rng()*0.28, fed:0
@@ -1049,7 +1246,9 @@ export function createSim(seed, profileKey='balanced'){
   const HUNT_RANGE = 46, EAT_RANGE = 2.6, TURF_RANGE = 16;
 
   function updateCreature(c, dt){
+    sim.tickWound(c, dt);
     if(!c.alive || c.gone) return;
+    if(c.state==='BEDDED'){ c.speed=0; return; }
     const sp = sim.species[c.species], p = sim.player;
     c.stateT += dt;
     /* ⚠️ HUNGER IS AN IN-WORLD-DAY CLOCK, NOT A MINUTE ONE. At 0.004/s a
@@ -1103,6 +1302,14 @@ export function createSim(seed, profileKey='balanced'){
             c.hunger = Math.max(0, c.hunger-0.5);
           } else {
             prey.alive=false; prey.gone=true;
+            /* ⚠️ if that was YOUR wounded quarry, §5 applies: something else
+               finished it, and the trophy you were tracking is gone */
+            if(prey.wound && prey.wound.ctx){
+              const rec=trophyScore({...prey.wound.ctx, scavenged:true});
+              rec.bounty=0; rec.species=(sim.species[prey.species]||{}).label||'—';
+              rec.at=sim.simSec; rec.trailed=true;
+              sim.bankTrophy(rec); sim.claimed=rec; prey.wound=null;
+            }
             sim.carrion.push({x:prey.x, z:prey.z, age:0, species:prey.species,
                               claimed:false});
             c.hunger = Math.max(0, c.hunger-0.7); c.fed++;
@@ -1157,10 +1364,15 @@ export function createSim(seed, profileKey='balanced'){
       if(dz < 9){ c.state = want.s; spd = sp.speed*0.25; }
       else spd = sp.speed;
     }
-    /* --- and everything runs from a spooked contact --- */
-    if(c.alertState==='SPOOKED' && sp.eats!=='meat'){
+    /* --- and everything runs from a spooked contact ---
+       a wounded ANYTHING runs, even a predator: it knows what a spear is now */
+    if(c.alertState==='SPOOKED' && (sp.eats!=='meat' || c.wound)){
       const ax=c.x-p.x, az=c.z-p.z, l=Math.hypot(ax,az)||1;
       tx=c.x+ax/l*30; tz=c.z+az/l*30; spd=sp.flee; c.state='FLEE';
+    }
+    if(c.wound){
+      if(c.wound.part==='leg') spd *= WOUNDS.leg.cripple;
+      spd *= 0.45 + 0.55*c.blood;
     }
 
     const dx=tx-c.x, dz2=tz-c.z, L=Math.hypot(dx,dz2);
@@ -1174,6 +1386,45 @@ export function createSim(seed, profileKey='balanced'){
     const lim=WORLD_SIZE*0.47;
     c.x=Math.max(-lim,Math.min(lim,c.x)); c.z=Math.max(-lim,Math.min(lim,c.z));
   }
+
+  /* ============================================================
+     THE WOUND TICK — shared by the quarry and every other creature.
+     Bleeding is a clock: blood 1→0, speed falls with it, at BED_AT the
+     beast lies down, and BED_DIE_T later it dies WHERE THE TRAIL ENDS.
+     ============================================================ */
+  sim.tickWound = function(c, dt){
+    if(!c.alive || !c.wound) return;
+    if(c.bleedRate > 0){
+      c.blood = Math.max(0, c.blood - c.bleedRate*dt);
+      /* a leg wound CLOTS — the beast survives, crippled and wiser.
+         "escapes wounded, remembers your scent, appreciates in value" (§11) */
+      if(c.wound.part==='leg' && c.blood <= WOUNDS.leg.clotAt){
+        c.bleedRate = 0;
+        c.wary = Math.min(3,(c.wary||0)+1);
+        c.specimenPct = Math.min(1.5, (c.specimenPct||0)+0.08);
+      }
+      /* blood sign: bright and frequent when heavy, dark and sparse when not */
+      if(c.speed > 0.3 && sim.simSec-(c.lastBlood||0) > (c.bleedRate>0.008?1.1:2.2)){
+        c.lastBlood = sim.simSec;
+        sim.blood.push({x:c.x, z:c.z, age:0,
+                        sev:c.bleedRate>0.008?1:WOUNDS[c.wound.part].sev});
+        if(sim.blood.length>BLOOD_MAX) sim.blood.shift();
+      }
+    }
+    if(c.wound.part==='gut' && c.blood<=BED_AT && c.state!=='BEDDED' && c.alive){
+      c.state='BEDDED'; c.dieT=BED_DIE_T; c.speed=0;
+    }
+    if(c.state==='BEDDED'){
+      c.dieT -= dt;
+      if(c.dieT<=0){
+        c.alive=false; c.gone=false;
+        /* it died of YOUR wound: the carcass carries the pending reckoning,
+           and you have to FIND it before something else does */
+        sim.carrion.push({x:c.x, z:c.z, age:0, species:c.species,
+          claimed:false, claim: c.wound.ctx ? {ctx:c.wound.ctx} : null});
+      }
+    }
+  };
 
   /* ⚠️ WITHOUT RECRUITMENT THE WEB IS NOT A WEB, IT IS A COUNTDOWN.
      Fixed populations plus predation means the apex eats every grazer and

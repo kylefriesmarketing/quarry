@@ -83,20 +83,31 @@ export const LEGENDARY_LAW_KEYS = Object.keys(LAWS).filter(k=>LAWS[k].legendary)
 export const LEGENDARY_LAW_CHANCE = 0.06;
 
 /* ---------- BIOMES — materials, palette, sky, locomotion constraint ---------- */
+/* ⚠️ `flora` is what makes the biome's NOUN true on screen. An "ash forest"
+   with no trees is a caption — the same contradiction as eyes on an eyeless
+   world. Every biome names its large flora and how many stand on a world;
+   the view builds them. */
 export const BIOMES = {
   saltflat:  { label:'SALT FLATS',    ground:0xd8d2c0, sky:'day',  cover:0.35,
+               flora:{kind:'saltform', count:34, tint:0xe8e4d6},
                noun:'a cracked white pan under a hard sun' },
   ashforest: { label:'ASH FOREST',    ground:0x6b6560, sky:'dusk', cover:0.95,
+               flora:{kind:'burnt', count:110, tint:0x4a4442},
                noun:'a grey forest that has already burned' },
   tidal:     { label:'TIDAL SHELF',   ground:0x7a8a86, sky:'gold', cover:0.55,
+               flora:{kind:'coral', count:70, tint:0xb08a74},
                noun:'a shelf the water leaves twice a day' },
   glass:     { label:'GLASS DESERT',  ground:0xa9b4c4, sky:'day',  cover:0.20,
+               flora:{kind:'crystal', count:52, tint:0xbfd2e2},
                noun:'a desert of fused glass that rings underfoot' },
   fungal:    { label:'FUNGAL BASIN',  ground:0x8a7a5e, sky:'dusk', cover:1.00,
+               flora:{kind:'shroom', count:85, tint:0xc9a06a},
                noun:'a warm basin choked with something that is not plants' },
   rift:      { label:'RIFT CANYON',   ground:0x8a6a58, sky:'gold', cover:0.60,
+               flora:{kind:'spire', count:60, tint:0x9a6a52},
                noun:'a red canyon cut deeper than light reaches' },
   moss:      { label:'MOSS PLAIN',    ground:0x6f7a52, sky:'day',  cover:0.85,
+               flora:{kind:'mossdome', count:90, tint:0x5f7a48},
                noun:'a soft green plain that swallows every sound' }
 };
 export const BIOME_KEYS = Object.keys(BIOMES);

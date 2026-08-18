@@ -268,7 +268,8 @@
     1 / 2 / 3 &nbsp; optics: none &middot; thermal &middot; pheromone<br>
     <b>LEFT-CLICK or V &mdash; the blade.</b> Get inside its reach; it is worth
     more than any throw.<br>
-    F throw spear &nbsp;&middot;&nbsp; TAB return to the ship &nbsp;&middot;&nbsp;
+    F throw spear &nbsp;&middot;&nbsp; R call (needs reeds) &nbsp;&middot;&nbsp;
+    TAB the ship &nbsp;&middot;&nbsp; H the hall &nbsp;&middot;&nbsp;
     E rest &amp; skip a phase (only when still)<br>
     C toggle cloak (it will cost you) &nbsp;&middot;&nbsp; ESC release mouse
   </div>
@@ -519,6 +520,100 @@ const coverBase=[];
   cover.count=n;
 }
 scene.add(cover);
+
+/* ============================================================
+   LARGE FLORA — the thing that makes the biome's noun TRUE. An "ash forest"
+   with no trees is a caption. Each biome names its flora in worldgen; this
+   builds it, instanced per component (a 110-tree forest is ~3 draw calls),
+   and it gives the world VERTICAL structure: landmarks, sightline breaks,
+   things to stalk behind that are taller than your knees.
+   ============================================================ */
+function makeInstanced(geo, mat, mats){
+  const m=new THREE.InstancedMesh(geo, mat, mats.length);
+  for(let i=0;i<mats.length;i++) m.setMatrixAt(i, mats[i]);
+  m.instanceMatrix.needsUpdate=true;
+  scene.add(m); return m;
+}
+function setupFlora(){
+  const F=sim.biome.flora; if(!F) return;
+  const tintMat=new THREE.MeshStandardMaterial({color:F.tint,roughness:0.9,
+    flatShading:true});
+  const darkMat=new THREE.MeshStandardMaterial({
+    color:new THREE.Color(F.tint).multiplyScalar(0.6).getHex(),
+    roughness:0.95,flatShading:true});
+  const A=[],B=[],C=[];                        // matrices per component
+  const m=new THREE.Matrix4(),q=new THREE.Quaternion(),
+        p=new THREE.Vector3(),s3=new THREE.Vector3(),e=new THREE.Euler();
+  const put=(arr,x,y,z,rx,ry,rz,sx,sy,sz)=>{
+    e.set(rx,ry,rz); q.setFromEuler(e); p.set(x,y,z); s3.set(sx,sy,sz);
+    m.compose(p,q,s3); arr.push(m.clone()); };
+  let placed=0, guard=0;
+  while(placed<F.count && guard++<F.count*8){
+    const x=(vrng()-0.5)*WORLD_SIZE*0.92, z=(vrng()-0.5)*WORLD_SIZE*0.92;
+    const y=W.heightAt(x,z);
+    if(y<WATER_Y+0.4) continue;
+    const sc=0.7+vrng()*0.9, ry=vrng()*Math.PI*2;
+    switch(F.kind){
+      case 'burnt': {                           // a dead tree: trunk + stubs
+        const h=5+vrng()*6;
+        put(A, x,y+h*0.5,z, (vrng()-0.5)*0.12,ry,(vrng()-0.5)*0.12, 1,h,1);
+        const n=1+((vrng()*2)|0);
+        for(let k=0;k<n;k++){
+          const by=y+h*(0.45+vrng()*0.4), ba=vrng()*Math.PI*2;
+          put(B, x+Math.sin(ba)*0.8,by,z+Math.cos(ba)*0.8,
+              0,ba,0.9+vrng()*0.5, 0.5,1.6+vrng()*1.4,0.5);
+        } break; }
+      case 'shroom': {                          // stalk + cap
+        const h=1.6+vrng()*2.8;
+        put(A, x,y+h*0.5,z, 0,ry,(vrng()-0.5)*0.2, 0.8*sc,h,0.8*sc);
+        put(B, x,y+h,z, 0,ry,0, sc*2.2,sc*0.9,sc*2.2);
+        break; }
+      case 'crystal': {                         // leaning translucent shards
+        for(let k=0;k<2+((vrng()*2)|0);k++)
+          put(A, x+(vrng()-0.5)*1.4,y+1.2,z+(vrng()-0.5)*1.4,
+              (vrng()-0.5)*0.7,vrng()*3,(vrng()-0.5)*0.7,
+              0.5*sc,(2+vrng()*3),0.5*sc);
+        break; }
+      case 'spire':                             // wind-cut rock needles
+        put(A, x,y+ (2.6+vrng()*4)*0.5,z, 0,ry,(vrng()-0.5)*0.14,
+            sc,(2.6+vrng()*4),sc);
+        break;
+      case 'coral': {                           // a branching fan
+        put(A, x,y+1.0,z, 0,ry,0, 0.6*sc,2.0,0.6*sc);
+        for(let k=0;k<3;k++)
+          put(B, x,y+1.8,z, 0,ry+k*2.1,0.7+vrng()*0.4, 0.35*sc,1.6,0.35*sc);
+        break; }
+      case 'saltform':                          // low crusted clumps
+        put(A, x,y+0.3,z, vrng(),ry,vrng(), sc*1.6,sc*0.55,sc*1.3);
+        break;
+      default:                                  // mossdome
+        put(A, x,y+0.25,z, 0,ry,0, sc*2.0,sc*0.9,sc*2.0);
+    }
+    placed++;
+  }
+  const kind=F.kind;
+  if(kind==='burnt'){
+    makeInstanced(new THREE.CylinderGeometry(0.16,0.34,1,6), darkMat, A);
+    makeInstanced(new THREE.CylinderGeometry(0.05,0.10,1,4), darkMat, B);
+  } else if(kind==='shroom'){
+    makeInstanced(new THREE.CylinderGeometry(0.16,0.24,1,6), darkMat, A);
+    const cap=new THREE.SphereGeometry(0.5,7,5,0,Math.PI*2,0,Math.PI*0.5);
+    makeInstanced(cap, tintMat, B);
+  } else if(kind==='crystal'){
+    const glass=new THREE.MeshStandardMaterial({color:F.tint,roughness:0.15,
+      metalness:0.1,transparent:true,opacity:0.62,flatShading:true});
+    makeInstanced(new THREE.ConeGeometry(0.5,1,5), glass, A);
+  } else if(kind==='coral'){
+    makeInstanced(new THREE.CylinderGeometry(0.22,0.34,1,5), tintMat, A);
+    makeInstanced(new THREE.ConeGeometry(0.3,1,4), darkMat, B);
+  } else if(kind==='spire'){
+    makeInstanced(new THREE.ConeGeometry(0.65,1,6), tintMat, A);
+  } else if(kind==='saltform'){
+    makeInstanced(new THREE.IcosahedronGeometry(0.6,0), tintMat, A);
+  } else {
+    makeInstanced(new THREE.IcosahedronGeometry(0.55,1), tintMat, A);
+  }
+}
 
 const rockMat=new THREE.MeshStandardMaterial({color:0x55503f,roughness:0.95,flatShading:true});
 const rocks=new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1,0),rockMat,140);
@@ -1114,7 +1209,15 @@ function updateCalls(dt){
   callT = 5 + Math.random()*14;
   const live = sim.fauna.filter(f=>f.alive && !f.gone);
   if(!live.length) return;
-  const c = live[Math.floor(Math.random()*live.length)];
+  /* the Named answers sometimes — a call at a range nothing else reaches */
+  let c = live[Math.floor(Math.random()*live.length)];
+  if(sim.Q.named && sim.Q.alive && !sim.Q.gone && Math.random()<0.14){
+    c = sim.Q;
+    const sp0=sim.species[c.species];
+    if(sp0){ sfx.voice({...sp0.voice, f0:sp0.voice.f0*0.55, dur:sp0.voice.dur*2.2},
+                       c.x, c.z);
+      flash('SOMETHING VAST ANSWERS, FAR OFF'); return; }
+  }
   const sp = sim.species[c.species];
   if(!sp) return;
   const heard = sfx.voice(sp.voice, c.x, c.z);
@@ -1139,6 +1242,58 @@ function drawCarrion(){
   carrionMesh.count=n; carrionMesh.instanceMatrix.needsUpdate=true;
 }
 setupFauna();
+setupFlora();
+
+/* ============================================================
+   THE SKY (§12) — "enormous skies with alien suns and weather you watch
+   arrive from far off." A visible sun, one or two moons that are simply
+   THERE, day and night, and stars that come up with the dark.
+   ⚠️ material.fog=false on all of it — FogExp2 at these distances multiplies
+   to zero and silently deletes the entire sky.
+   ============================================================ */
+const skyGroup=new THREE.Group(); scene.add(skyGroup);
+let sunSprite=null, starPts=null;
+{
+  const cv=document.createElement('canvas'); cv.width=cv.height=128;
+  const g=cv.getContext('2d');
+  const grad=g.createRadialGradient(64,64,4,64,64,64);
+  grad.addColorStop(0,'rgba(255,244,214,1)');
+  grad.addColorStop(0.25,'rgba(255,226,168,0.85)');
+  grad.addColorStop(1,'rgba(255,210,140,0)');
+  g.fillStyle=grad; g.fillRect(0,0,128,128);
+  const tex=new THREE.CanvasTexture(cv);
+  const mat=new THREE.SpriteMaterial({map:tex,fog:false,transparent:true,
+    depthWrite:false});
+  sunSprite=new THREE.Sprite(mat); sunSprite.scale.setScalar(150);
+  skyGroup.add(sunSprite);
+
+  /* the moons: seeded from the view rng, so each world's sky is its own */
+  const nMoons=1+((vrng()*2)|0);
+  for(let i=0;i<nMoons;i++){
+    const az=vrng()*Math.PI*2, el=0.25+vrng()*0.9, r=700;
+    const moon=new THREE.Mesh(new THREE.SphereGeometry(18+vrng()*34, 12, 10),
+      new THREE.MeshStandardMaterial({fog:false, roughness:1, flatShading:true,
+        color:[0xb9aFa4,0x9aa8b4,0xc4b090][((vrng()*3)|0)],
+        emissive:0x22201c, emissiveIntensity:0.6}));
+    moon.position.set(Math.sin(az)*Math.cos(el)*r, Math.sin(el)*r,
+                      Math.cos(az)*Math.cos(el)*r);
+    skyGroup.add(moon);
+  }
+
+  /* stars — a hemisphere of points that fades up with the dark */
+  const N=900, pos=new Float32Array(N*3);
+  for(let i=0;i<N;i++){
+    const az=vrng()*Math.PI*2, el=Math.asin(vrng())*0.98+0.02, r=780;
+    pos[i*3]=Math.sin(az)*Math.cos(el)*r;
+    pos[i*3+1]=Math.sin(el)*r;
+    pos[i*3+2]=Math.cos(az)*Math.cos(el)*r;
+  }
+  const sg=new THREE.BufferGeometry();
+  sg.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  starPts=new THREE.Points(sg, new THREE.PointsMaterial({color:0xcfd8e8,
+    size:2.2, sizeAttenuation:false, fog:false, transparent:true, opacity:0}));
+  skyGroup.add(starPts);
+}
 
 /* scent puffs (pheromone optic) */
 const PUFF_MAX=260, puffs=[];
@@ -1156,6 +1311,33 @@ const trackMesh=new THREE.InstancedMesh(trackGeo,trackMat,TRACK_MAX);
 trackMesh.count=0; scene.add(trackMesh);
 
 /* shaft along -Z so lookAt() (which aims -Z) points the head at the target */
+/* BLOOD SIGN — the other trail. Bright and heavy: it dies soon. Dark and
+   sparse: hours of work. The pheromone optic makes it burn. */
+const BLOOD_N=240;
+const bloodGeo=new THREE.CircleGeometry(0.30,7); bloodGeo.rotateX(-Math.PI/2);
+const bloodMat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,
+  opacity:0.66,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-4,
+  polygonOffsetUnits:-4});
+const bloodMesh=new THREE.InstancedMesh(bloodGeo,bloodMat,BLOOD_N);
+bloodMesh.count=0; scene.add(bloodMesh);
+const _bright=new THREE.Color(0x9c1c10), _dark=new THREE.Color(0x451009),
+      _hotBlood=new THREE.Color(0xff2f6a);
+function drawBlood(){
+  let n=0;
+  for(const b of sim.blood){
+    if(b.age>700) continue;
+    const fade=1-b.age/700;
+    _p.set(b.x, W.heightAt(b.x,b.z)+0.05, b.z);
+    _s.setScalar((0.5+b.sev*0.8)*(0.5+fade*0.5));
+    _m.compose(_p,_q,_s); bloodMesh.setMatrixAt(n,_m);
+    bloodMesh.setColorAt(n, optic===2 ? _hotBlood
+      : (b.sev>0.8 ? _bright : _dark));
+    if(++n>=BLOOD_N) break;
+  }
+  bloodMesh.count=n; bloodMesh.instanceMatrix.needsUpdate=true;
+  if(bloodMesh.instanceColor) bloodMesh.instanceColor.needsUpdate=true;
+}
+
 const spearGeo=new THREE.CylinderGeometry(0.012,0.03,2.0,5); spearGeo.rotateX(-Math.PI/2);
 const spearMat=new THREE.MeshStandardMaterial({color:0xb8a074,roughness:0.6,flatShading:true});
 const flying=[];
@@ -1217,6 +1399,19 @@ addEventListener('keydown',e=>{ keys[e.code]=true;
   if(e.code==='Digit3')tryOptic(2,'pheromone');
   if(e.code==='KeyF')throwSpear();
   if(e.code==='KeyV'||e.code==='Space')swingBlade();
+  if(e.code==='KeyR'){
+    if(!sim.hunter.gear || !sim.hunter.gear.calls)
+      flash('YOU HAVE NO CALL REEDS — a merchant hulk sells them');
+    else {
+      const r=sim.callQuarry();
+      const sp=sim.species[sim.Q.species];
+      if(sp) sfx.voice({...sp.voice, dur:sp.voice.dur*1.4}, sim.player.x, sim.player.z);
+      sim.player.noise=Math.max(sim.player.noise,0.4);   // a call is LOUD
+      flash(r.answered ? 'YOU CALL. SOMETHING TURNS TOWARD THE SOUND.'
+                       : 'YOU CALL. '+(r.why==='it is not fooled'
+                         ?'NOTHING IS FOOLED.':'THE CALL GOES UNANSWERED.'));
+    }
+  }
   if(e.code==='KeyC'){
     if(!sim.hasKit('cloak')){ flash('THE CLOAK IS GONE. YOU ARE VISIBLE.'); }
     else { sim.player.cloaked=!sim.player.cloaked;
@@ -1276,6 +1471,8 @@ function setOptic(o){
   el('grain').style.opacity = postOn ? '0' : '.09';
   el('vig').style.opacity   = postOn ? '0' : '1';
   puffMesh.visible=(o===2);
+  /* the optics are sensor feeds; the naked sky belongs to the naked eye */
+  if(typeof skyGroup!=='undefined') skyGroup.visible=(o===0);
   /* ⚠️ thermal has to light up EVERY warm body, not just the one you came
      for — half the point of the optic is finding what else is out there. */
   const setEmis=(hex,i)=>{
@@ -1336,6 +1533,15 @@ function applySky(){
   const a=(h-6)/24*Math.PI*2;
   sun.position.set(Math.cos(a)*70,Math.max(4,Math.sin(a)*70),26);
   fog.density=0.0055+(1-d)*0.006;
+  /* the sky itself: the sun you can SEE rides the light's arc; stars come up
+     as the light goes; the biome breathes into the fog colour */
+  if(sunSprite){
+    sunSprite.position.copy(sun.position).normalize().multiplyScalar(720);
+    sunSprite.material.opacity=Math.min(1, 0.15+d*1.1);
+  }
+  if(starPts) starPts.material.opacity=Math.max(0,(1-d)-0.25)*1.3;
+  scene.fog.color.lerp(new THREE.Color(sim.biome.ground), 0.18);
+  renderer.setClearColor(scene.fog.color);
 }
 
 /* ============================================================
@@ -1422,11 +1628,14 @@ function drawQuarry(){
 
 function drawTracks(){
   let n=0;
+  /* ⚠️ THE NAMED ARE TELEGRAPHED (§8): oversized sign an hour before you ever
+     see them. A print nearly twice the size is the first thing you notice. */
+  const printScale = sim.Q.named ? 1.9 : 1.0;
   for(const t of sim.tracks){
     const life=1-Math.min(1,t.age/900);
     if(life<=0.02) continue;
     _p.set(t.x,W.heightAt(t.x,t.z)+0.03,t.z);
-    _s.set(life*1.1+0.3,1,life*1.1+0.3);
+    _s.set((life*1.1+0.3)*printScale,1,(life*1.1+0.3)*printScale);
     _m.compose(_p,_q,_s); trackMesh.setMatrixAt(n++,_m);
     if(n>=TRACK_MAX) break;
   }
@@ -1582,9 +1791,21 @@ function creatureHit(px,py,pz){
     const halfW = Math.max(1.0, L.body[0]*0.62);
     const lo = gy - 0.2, hi = gy + L.h + L.body[1] + 0.5;
     if(Math.hypot(px-c.x,pz-c.z) < halfW && py > lo && py < hi)
-      return { c, i, headY: gy + L.h + L.body[1]*0.6 };
+      return { c, i, v, gy, headY: gy + L.h + L.body[1]*0.6 };
   }
   return null;
+}
+
+/* ⚠️ WHERE IT HIT IS THE WHOLE GAME NOW (§3). Skull ruins the trophy;
+   vitals drop it; GUT starts the long dark trail; LEG cripples it and it
+   gets away wiser. Read off the creature's real generated body. */
+function partOf(hit, px, py, pz){
+  const c=hit.c, L=hit.v.userData.look;
+  if(py > hit.headY) return 'skull';
+  if(L.legCount>0 && py < hit.gy + L.legs*0.85) return 'leg';
+  /* fore/aft along its facing — the sim's (sin f, cos f) convention */
+  const fore=(px-c.x)*Math.sin(c.facing)+(pz-c.z)*Math.cos(c.facing);
+  return fore > 0 ? 'vitals' : 'gut';
 }
 
 /* the ONE place a hit becomes a Reckoning, for spear and blade alike */
@@ -1597,6 +1818,8 @@ function resolveHit(hit, part, thrown, weapon){
     showReckoning(sim.hunter.trophies[sim.hunter.trophies.length-1]);
     return rec;
   }
+  /* a WOUND is not a reckoning yet — it is the start of a trail */
+  if(rec.wounded){ flash(rec.tell || 'IT IS HIT'); return rec; }
   /* THE NEMESIS HUNT, PAID OFF: kill the thing wearing your gear and you
      take it back off the carcass. */
   if(c.carrying){ const k=c.carrying; sim.hunter.kit[k]=true; c.carrying=null;
@@ -1628,9 +1851,8 @@ function updateSpears(dt){
     }
     const hit=creatureHit(s.p.x,s.p.y,s.p.z);
     if(hit){
-      /* WHERE it hit decides the trophy — a skull shot ruins it (§3). There
-         are no health bars; you read the body. */
-      const part = s.p.y > hit.headY ? 'skull' : 'body';
+      /* WHERE it hit decides everything — skull, vitals, gut or leg */
+      const part = partOf(hit, s.p.x, s.p.y, s.p.z);
       s.mesh.visible=false; flying.splice(i,1);
       /* thrown by your PRIMARY — an energy weapon caps this at Culling */
       resolveHit(hit, part, true, sim.hunter.primary||'spears');
@@ -2084,7 +2306,10 @@ function updateHUD(dt){
   const readRange = mods.optic? 34 : 130;
   el('qdist').textContent=Q.gone?'GONE':!Q.alive?'DOWN'
     :d<readRange?d.toFixed(0)+'m':(mods.optic?'CANNOT FOCUS':'—');
-  el('qstate').textContent=(Q.gone||!Q.alive)?'—':Q.charging?'CHARGING':Q.state;
+  el('qstate').textContent=(Q.gone&&!Q.wound)?'—':!Q.alive?'—'
+    :Q.charging?'CHARGING'
+    :Q.state==='BEDDED'?'BEDDED — CLOSE IN'
+    :Q.wound?(Q.state+' · BLEEDING'):Q.state;
   el('chan').textContent=Q.lastChannel;
   el('spears').textContent=p.spears;
   const aw=el('awareness');
@@ -2178,9 +2403,11 @@ function stepFrame(dt, withInput){
         :sim.Q.lastChannel==='SCENT'?'CAUGHT YOUR SCENT':'HEARD YOU'));
   }
   drawQuarry(); drawFauna(); drawClan(); drawColonists();
-  drawCarrion(); updateCalls(dt);
+  drawCarrion(); drawBlood(); updateCalls(dt);
   maybeSendHunter(dt);
   drawTracks(); drawPuffs(dt); drawCover(); updateSpears(dt); updateBlade(dt);
+  /* a trophy claimed — or lost to a scavenger — at the end of a blood trail */
+  if(sim.claimed){ showReckoning(sim.claimed); sim.claimed=null; }
   updateWound(dt);
   if(optic===0) applySky();
   updateHUD(dt);
