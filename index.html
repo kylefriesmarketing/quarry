@@ -386,6 +386,10 @@
 { "imports": { "three": "./lib/three.module.js" } }
 </script>
 
+<!-- M12: PeerJS is a classic script (window.Peer); net.js never imports it,
+     so the lockstep engine stays headless-testable -->
+<script src="lib/peerjs.min.js"></script>
+
 <script type="module">
 import * as THREE from 'three';
 import {createSim, makeRNG, PROFILES, WORLD_SIZE, WATER_Y, GRID,
@@ -400,6 +404,7 @@ import {createSfx} from './sfx.js';
 import {loadUniverse, packHunter, unpackHunter, jumpCost,
         FUEL_MAX, REFUEL_COST, SECTOR_JUMP} from './universe.js';
 import {WEAPONS, GEAR, merchantFor, priceOf, canBuy, buy} from './market.js';
+import {hostRoom, joinRoom, qNetTest, INPUT_DELAY} from './net.js';
 
 const el=id=>document.getElementById(id);
 const ERR=document.getElementById('err');
@@ -428,12 +433,27 @@ const PROFILE_POOL=['watcher','nose','listener','balanced','ambusher'];
 /* ⚠️ ?seed= still overrides, for testing and for sharing a specific world —
    but the SHIP is the normal way you get somewhere now. */
 const URL_SEED=QS.get('seed');
-const SEED=URL_SEED!==null ? parseInt(URL_SEED,10) : universe.worldSeed();
-const PROFILE=PROFILES[QS.get('profile')] ? QS.get('profile')
+/* ============================================================
+   M12 — THE PARTY. ?host=N opens a room on THIS world; ?join=CODE
+   connects FIRST (top-level await) so the guest builds the HOST's world,
+   not its own. The lobby holds the world frozen until the host begins.
+   ============================================================ */
+const MPQ={host:QS.get('host'), join:QS.get('join')};
+let MP=null;                        // {room, L, mySeat, seats, lossChosen}
+let mpRoomPre=null;
+if(MPQ.join){
+  mpBanner('REACHING THE PARTY — ROOM '+MPQ.join.toUpperCase()+'…');
+  mpRoomPre = await joinRoom(window.Peer, MPQ.join, mpEvent);
+}
+const SEED = mpRoomPre ? mpRoomPre.seed
+           : URL_SEED!==null ? parseInt(URL_SEED,10) : universe.worldSeed();
+const PROFILE = mpRoomPre ? mpRoomPre.profile
+              : PROFILES[QS.get('profile')] ? QS.get('profile')
               : PROFILE_POOL[SEED%PROFILE_POOL.length];
 /* M13: if the ship is parked on an Old Ground, the world is AUTHORED.
    A ?seed override is a dev/share path and stays a rolled world. */
-const GROUND = URL_SEED!==null ? null
+const GROUND = mpRoomPre ? mpRoomPre.ground
+             : URL_SEED!==null ? null
              : clanGroundAt(universe.at.sx, universe.at.sy, universe.at.idx);
 const sim=createSim(SEED, PROFILE, GROUND);
 const W=sim.world;
@@ -1412,7 +1432,9 @@ let sunSprite=null, starPts=null, skyDome=null;
     fragmentShader:'uniform vec3 uZen,uHor; varying float vY;'+
       ' void main(){ float t=clamp(vY*1.6,0.0,1.0);'+
       ' gl_FragColor=vec4(mix(uHor,uZen,t),1.0);'+
-      ' #include <tonemapping_fragment>\n#include <colorspace_fragment>\n}'
+      /* ⚠️ GLSL #include is a PREPROCESSOR directive — it must start its own
+         line or the shader fails VALIDATE_STATUS and the dome goes dark */
+      '\n#include <tonemapping_fragment>\n#include <colorspace_fragment>\n}'
   });
   mat.toneMapped=true;
   skyDome=new THREE.Mesh(new THREE.SphereGeometry(795,24,14),mat);
@@ -1534,7 +1556,7 @@ const bladeMesh=new THREE.Group();
    INPUT
    ============================================================ */
 const keys={}, gate=document.getElementById('gate');
-let pitch=0;
+let pitch=0, camYaw=0;         // camYaw: MP view-side look (sim yaw follows)
 /* You cannot use what the beast is wearing. Each of these is the wound
    speaking through the controls rather than through a status icon. */
 function tryOptic(o,need){
@@ -1553,12 +1575,19 @@ function tryOptic(o,need){
   setOptic(o);
 }
 addEventListener('keydown',e=>{ keys[e.code]=true;
+  /* M12: the lobby — Enter begins the hunt (host, all ready) */
+  if(MP && !MP.L){ if(e.code==='Enter') mpStart(); return; }
   if(wakeOpen){ if(e.code==='Space'||e.code==='Enter') dismissWake(); return; }
   if(reckOpen){ if(e.code==='Space'||e.code==='Enter') dismissReckoning(); return; }
-  if(e.code==='Tab'){ e.preventDefault(); shipOpen?closeShip():openShip(); return; }
+  if(e.code==='KeyP' && !MP){ mpPanel(); return; }
+  if(e.code==='Tab'){ e.preventDefault();
+    if(MP){ flash('NOT WHILE THE PARTY HUNTS'); return; }
+    shipOpen?closeShip():openShip(); return; }
   if(shipOpen){ if(e.code==='Escape') closeShip(); return; }
   if(mktOpen){ if(e.code==='Escape') closeMarket(); return; }
-  if(e.code==='KeyH'){ hallOpen?closeHall():openHall(); return; }
+  if(e.code==='KeyH'){
+    if(MP){ flash('NOT WHILE THE PARTY HUNTS'); return; }
+    hallOpen?closeHall():openHall(); return; }
   if(hallOpen){ if(e.code==='Escape') closeHall(); return; }
   if(e.code==='Digit1')tryOptic(0,null);
   if(e.code==='Digit2')tryOptic(1,'thermal');
@@ -1568,7 +1597,14 @@ addEventListener('keydown',e=>{ keys[e.code]=true;
   if(e.code==='KeyR'){
     if(!sim.hunter.gear || !sim.hunter.gear.calls)
       flash('YOU HAVE NO CALL REEDS — a merchant hulk sells them');
-    else {
+    else if(MP){
+      /* the call is a lockstep command — every client's beast hears it */
+      MP.L && MP.L.queue({t:'reed'});
+      mpNoiseSpike=Math.max(mpNoiseSpike,0.4);
+      const sp=sim.species[sim.Q.species];
+      if(sp) sfx.voice({...sp.voice, dur:sp.voice.dur*1.4}, sim.player.x, sim.player.z);
+      flash('YOU CALL INTO THE DARK.');
+    } else {
       const r=sim.callQuarry();
       const sp=sim.species[sim.Q.species];
       if(sp) sfx.voice({...sp.voice, dur:sp.voice.dur*1.4}, sim.player.x, sim.player.z);
@@ -1580,10 +1616,15 @@ addEventListener('keydown',e=>{ keys[e.code]=true;
   }
   if(e.code==='KeyC'){
     if(!sim.hasKit('cloak')){ flash('THE CLOAK IS GONE. YOU ARE VISIBLE.'); }
+    else if(MP){ mpCloakWish=!mpCloakWish;
+      post.glitch(0.9,0.12);
+      flash(mpCloakWish?'CLOAK ENGAGED — YOUR TROPHY IS FORFEIT':'CLOAK DOWN'); }
     else { sim.player.cloaked=!sim.player.cloaked;
       post.glitch(0.9,0.12);   // engaging the cloak is a full interlace tear
       flash(sim.player.cloaked?'CLOAK ENGAGED — YOUR TROPHY IS FORFEIT':'CLOAK DOWN'); }}
-  if(e.code==='KeyE'){ const r=sim.restSkip();
+  if(e.code==='KeyE'){
+    if(MP){ flash('THE NIGHT DOES NOT WAIT FOR ONE HUNTER — NO RESTING IN A PARTY'); return; }
+    const r=sim.restSkip();
     flash(r?('YOU REST — '+r.before+' → '+r.after):'YOU MUST BE STILL TO REST'); }
 });
 addEventListener('keyup',e=>keys[e.code]=false);
@@ -1613,7 +1654,11 @@ addEventListener('click',()=>{ if(wakeOpen||reckOpen||shipOpen||hallOpen) return
 });
 addEventListener('mousemove',e=>{
   if(document.pointerLockElement!==renderer.domElement) return;
-  sim.player.yaw-=e.movementX*0.0022;
+  /* MP: the look is INSTANT on a view-side yaw; the seat's sim yaw follows
+     through the move command. Writing sim yaw directly would be a local
+     mutation of lockstep state — the M1 bug class, networked. */
+  if(MP) camYaw-=e.movementX*0.0022;
+  else sim.player.yaw-=e.movementX*0.0022;
   pitch=Math.max(-1.4,Math.min(1.4,pitch-e.movementY*0.0022));
 });
 addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight;
@@ -1761,8 +1806,14 @@ function placeCamera(dt){
   const eye=(p.crouch?1.05:1.7)*(1-woundCrouch());
   const y=W.heightAt(p.x,p.z)+eye;
   const k=Math.min(1,dt*11);
-  camera.position.set(p.x, camera.position.y+(y-camera.position.y)*k, p.z);
-  camera.rotation.set(pitch,p.yaw,0,'YXZ');
+  if(MP){
+    /* the seat moves in 20Hz lockstep steps — glide the camera onto it */
+    const k2=Math.min(1,dt*10);
+    camera.position.x+=(p.x-camera.position.x)*k2;
+    camera.position.z+=(p.z-camera.position.z)*k2;
+    camera.position.y+=(y-camera.position.y)*k;
+  } else camera.position.set(p.x, camera.position.y+(y-camera.position.y)*k, p.z);
+  camera.rotation.set(pitch, MP?camYaw:p.yaw, 0, 'YXZ');
   /* the hit that opened you up, and the sway of carrying it afterwards */
   if(cam_shake>0){
     cam_shake=Math.max(0,cam_shake-dt*1.6);
@@ -1871,7 +1922,8 @@ function swingBlade(){
   if(!sim.hasKit('blade')){ flash('THE BLADE IS GONE. IT IS WEARING IT.'); return; }
   if(bladeT>0) return;
   bladeT=BLADE_CD; bladeSwing=1;
-  sim.player.noise=Math.max(sim.player.noise,0.35);
+  if(MP) mpNoiseSpike=Math.max(mpNoiseSpike,0.35);
+  else sim.player.noise=Math.max(sim.player.noise,0.35);
   /* reach out along the way you are looking */
   const dir=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
   const p=sim.player, eyeY=W.heightAt(p.x,p.z)+(p.crouch?1.05:1.7);
@@ -1883,6 +1935,8 @@ function swingBlade(){
     if(!ch && !co) hit=creatureHit(p.x+dir.x*t, eyeY+dir.y*t, p.z+dir.z*t);
   }
   if(co){ const d=Math.hypot(p.x-co.x,p.z-co.z);
+    if(MP){ MP.L && MP.L.queue({t:'strikeCol',
+      idx:sim.colony.people.indexOf(co), dist:d, part:'body'}); return; }
     showReckoning(sim.strikeColonist({target:co, dist:d, part:'body'})); return; }
   /* ⚠️ taking a clan hunter with the BLADE is the redemption the fiction
      wants — a dangerous assignment no hunter in good standing would take. */
@@ -1915,7 +1969,8 @@ function throwSpear(){
              dir.z+=(Math.random()-0.5)*err; dir.normalize(); }
   const mesh=new THREE.Mesh(spearGeo,spearMat); scene.add(mesh);
   flying.push({p:camera.position.clone(),v:dir.multiplyScalar(30).add(new THREE.Vector3(0,1.6,0)),mesh});
-  sim.player.noise=Math.max(sim.player.noise,0.55);
+  if(MP) mpNoiseSpike=Math.max(mpNoiseSpike,0.55);
+  else sim.player.noise=Math.max(sim.player.noise,0.55);
 }
 /* ⚠️ HIT DETECTION IS AGAINST EVERY LIVE CREATURE, AND AGAINST ITS REAL BODY.
    The first version tested only sim.Q against a hardcoded band gy+1.2..3.4:
@@ -1991,6 +2046,10 @@ function partOf(hit, px, py, pz){
 function resolveHit(hit, part, thrown, weapon){
   const c=hit.c;
   const dist=Math.hypot(sim.player.x-c.x, sim.player.z-c.z);
+  /* M12: your aim is yours; the STRIKE is a lockstep command. The
+     reckoning shows when the echo executes (mpHandle). */
+  if(MP){ MP.L && MP.L.queue({t:'strike', target:hit.i, dist, part, thrown, weapon});
+    return null; }
   const rec=sim.strike({dist, part, thrown, target:c, weapon});
   if(rec.overkill){
     flash('YOU STRIKE A DEAD THING — THE TROPHY IS VOID');
@@ -2016,8 +2075,10 @@ function updateSpears(dt){
     if(co){
       s.mesh.visible=false; flying.splice(i,1);
       const d=Math.hypot(sim.player.x-co.x, sim.player.z-co.z);
-      showReckoning(sim.strikeColonist({target:co, dist:d,
-        part:s.p.y>W.heightAt(co.x,co.z)+1.55?'skull':'body'}));
+      const cpart=s.p.y>W.heightAt(co.x,co.z)+1.55?'skull':'body';
+      if(MP){ MP.L && MP.L.queue({t:'strikeCol',
+        idx:sim.colony.people.indexOf(co), dist:d, part:cpart}); }
+      else showReckoning(sim.strikeColonist({target:co, dist:d, part:cpart}));
       continue;
     }
     const ch=clanHit(s.p.x,s.p.y,s.p.z);
@@ -2040,7 +2101,10 @@ function updateSpears(dt){
     const Q=sim.Q;
     const h=W.heightAt(s.p.x,s.p.z);
     if(s.p.y<=h){ s.p.y=h; s.mesh.position.copy(s.p); flying.splice(i,1);
-      if(Math.hypot(s.p.x-Q.x,s.p.z-Q.z)<28) Q.awareness=Math.min(1,Q.awareness+0.5); }
+      /* a landed spear spooks — sim state, so in MP it goes by command */
+      if(MP){ MP.L && MP.L.queue({t:'miss', x:s.p.x, z:s.p.z}); }
+      else if(Math.hypot(s.p.x-Q.x,s.p.z-Q.z)<28)
+        Q.awareness=Math.min(1,Q.awareness+0.5); }
   }
 }
 
@@ -2107,6 +2171,19 @@ function onBroken(ev){
   wakeOpen=true; wakeT=0;
 }
 function chooseLoss(k){
+  if(MP){
+    /* the choice is a lockstep command — every client's beast agrees on
+       what it is wearing. The KIT loss itself is this client's ledger. */
+    if(MP.lossChosen) return;
+    MP.lossChosen=true;
+    sim.hunter.kit[k]=false;
+    MP.L && MP.L.queue({t:'loss', key:k});
+    const pick=el('wk-pick'); pick.innerHTML='';
+    el('wk-took').textContent=KIT[k].label;
+    el('wk-tooknote').textContent=KIT[k].taken;
+    el('wk-go').style.display='';
+    return;
+  }
   const took=sim.resolveLoss(k);
   if(!took) return;
   const pick=el('wk-pick'); pick.innerHTML='';
@@ -2123,7 +2200,8 @@ function updateWound(dt){
 }
 function dismissWake(){
   if(!wakeOpen || wakeT<1.2) return false;      // let the fade finish landing
-  if(sim.hunter.pendingLoss) return false;      // it does not leave empty-handed
+  if(MP ? !MP.lossChosen && sim.pendingLossSeat===MP.mySeat
+        : sim.hunter.pendingLoss) return false; // it does not leave empty-handed
   wakeOpen=false; el('wake').classList.remove('on');
   /* an optic you no longer own cannot stay on your face */
   if((optic===1&&!sim.hasKit('thermal'))||(optic===2&&!sim.hasKit('pheromone'))) setOptic(0);
@@ -2607,6 +2685,195 @@ function updateHUD(dt){
   el('grain').style.backgroundImage='url('+c.toDataURL()+')'; })();
 
 /* ============================================================
+   M12 — THE PARTY (view side). Commands out, echoes in. The local client
+   resolves its own aim; the sim applies the identical command list on
+   every client. See net.js for the lockstep engine and its harness.
+   ============================================================ */
+let mpAccum=0, mpStall=0, mpStallBan=false, mpNoiseSpike=0, mpCloakWish=false;
+const partnerViews=[];
+
+function mpQueueMove(){
+  let fx=0,fz=0;
+  if(keys['KeyW'])fz-=1; if(keys['KeyS'])fz+=1;
+  if(keys['KeyA'])fx-=1; if(keys['KeyD'])fx+=1;
+  const c={t:'move', fx, fz, yaw:camYaw,
+    crouch:!!(keys['ControlLeft']||keys['ControlRight']),
+    slow:!!(keys['ShiftLeft']||keys['ShiftRight']),
+    cloak:mpCloakWish};
+  if(mpNoiseSpike>0){ c.n=mpNoiseSpike; mpNoiseSpike=0; }
+  MP.L.queue(c);
+}
+
+function mpHandle(r){
+  if(!r) return;
+  if(r.per) lastPer=r.per;
+  const per=r.per;
+  if(per && per.broke) mpOnBroke(per.broke);
+  if(per && per.justSpooked){
+    spooked++;
+    flash(sim.Q.gone?'IT HAS HAD ENOUGH OF YOU'
+      :'IT KNOWS — IT '+(sim.Q.lastChannel==='SIGHT'?'SAW YOU'
+        :sim.Q.lastChannel==='SCENT'?'CAUGHT YOUR SCENT':'HEARD YOU'));
+  }
+  for(const e of (r.res||[])){
+    if(e.cmd.t!=='strike' && e.cmd.t!=='strikeCol') continue;
+    const rec=e.rec;
+    if(e.seat===MP.mySeat){
+      if(rec.overkill){ flash('YOU STRIKE A DEAD THING — THE TROPHY IS VOID');
+        showReckoning(sim.hunter.trophies[sim.hunter.trophies.length-1]); }
+      else if(rec.wounded){ flash(rec.tell || 'IT IS HIT'); }
+      else if(!rec.miss){
+        if(rec.took){ sim.hunter.kit[rec.took]=true;
+          flash('YOU CUT YOUR '+kitOwn(rec.took)+' BACK OFF IT'); }
+        showReckoning(rec);
+      }
+    } else {
+      if(rec.wounded) flash('YOUR PARTNER DREW BLOOD');
+      else if(!rec.overkill && !rec.miss)
+        flash("YOUR PARTNER MADE THE KILL — THE TROPHY IS THE PARTY'S");
+    }
+  }
+}
+
+function mpOnBroke(b){
+  if(b.seat===MP.mySeat){
+    if(b.tier==='bleeding'){ onWounded(b); return; }
+    /* the slim break: the sim moved the seat; the LEDGER is ours to keep */
+    const H=sim.hunter;
+    H.injuries[b.injury]=(H.injuries[b.injury]||0)+1;
+    H.breaks=(H.breaks||0)+1;
+    MP.lossChosen=false;
+    onBroken(b);
+  } else {
+    flash(b.tier==='bleeding' ? 'YOUR PARTNER IS BLEEDING'
+      : 'YOUR PARTNER IS BROKEN — IT SENT THEM BACK TO THE SHIP');
+  }
+}
+
+/* partners are rendered from the SIM — the one place all clients agree */
+function buildPartner(tint){
+  const g=buildClanHunter();
+  g.traverse(m=>{ if(!m.isMesh || m.material.map===_shadowTex) return;
+    m.material=m.material.clone();
+    if(m.material.color.getHex()===0x6d5f52) m.material.color.setHex(tint);
+  });
+  g.scale.setScalar(0.79);                  // your size, not the clan's
+  return g;
+}
+function drawPartners(){
+  if(!MP || !MP.L){ return; }
+  for(let i=0;i<sim.hunters.length;i++){
+    if(i===MP.mySeat){ if(partnerViews[i]) partnerViews[i].visible=false; continue; }
+    const h=sim.hunters[i];
+    let v=partnerViews[i];
+    if(!v){ v=buildPartner(i===1?0x4a7d6d:0x8a5a3a);
+      scene.add(v); partnerViews[i]=v; }
+    v.visible=true;
+    v.position.set(h.x, W.heightAt(h.x,h.z), h.z);
+    v.rotation.y=h.yaw+Math.PI;             // camera-forward is yaw+π
+    v.scale.y=0.79*(h.crouch?0.7:1);
+    const cl=h.cloaked;
+    v.traverse(m=>{ if(!m.isMesh || m.material.map===_shadowTex) return;
+      m.material.transparent=cl; m.material.opacity=cl?0.13:1.0;
+      m.material.depthWrite=!cl; });
+  }
+}
+
+/* ---------- lobby / banner ---------- */
+function mpBanner(text){
+  let b=document.getElementById('mpban');
+  if(!b){ b=document.createElement('div'); b.id='mpban';
+    b.style.cssText='position:fixed;top:12%;left:50%;transform:translateX(-50%);'+
+      'z-index:60;background:rgba(8,10,9,0.88);border:1px solid #3d5147;'+
+      'color:#cfe3d8;padding:14px 22px;font:14px/1.6 monospace;letter-spacing:1px;'+
+      'text-align:center;max-width:70vw;white-space:pre-wrap;display:none';
+    document.body.appendChild(b); }
+  if(text==null){ b.style.display='none'; return; }
+  b.innerHTML=text; b.style.display='block';
+}
+function mpHostText(room){
+  const joined=room.guests, ready=room.ready.size, need=room.seats-1;
+  return 'THE PARTY GATHERS\n\nROOM CODE  <b style="font-size:22px;color:#e8d9a8">'
+    +room.code+'</b>\n\nsend your partner this page with  ?join='+room.code+
+    '\n\nhunters joined '+joined+'/'+need+' &middot; ready '+ready+'/'+need+
+    (room.allReady() ? '\n\n<b>PRESS ENTER TO BEGIN THE HUNT</b>'
+                     : '\n\nwaiting for the party…');
+}
+function mpEvent(ev){
+  if(!MP && ev.t!=='error') return;
+  if(ev.t==='join'||ev.t==='ready'||ev.t==='leave'){
+    if(MP && MP.room && MP.mySeat===0 && !MP.L) mpBanner(mpHostText(MP.room));
+    if(ev.t==='leave' && MP && MP.L) flash('A HUNTER HAS LEFT THE PARTY');
+  }
+  if(ev.t==='left' && MP && MP.L) flash('A HUNTER HAS LEFT THE PARTY');
+  if(ev.t==='desync'){ mpBanner('THE PARTY HAS FALLEN OUT OF STEP (desync at tick '
+    +ev.tick+') — reload to hunt again'); }
+  if(ev.t==='hostgone'){ mpBanner('THE HOST IS GONE — reload to return to your own hunt'); }
+  if(ev.t==='error'){ mpBanner('THE ROOM COULD NOT BE REACHED — reload to try again'); }
+}
+function mpStart(){                           // host, Enter at the lobby
+  if(!MP || MP.mySeat!==0 || MP.L || !MP.room || !MP.room.allReady()) return false;
+  const L=MP.room.start();
+  MP.L=L; MP.seats=1+MP.room.guests;
+  sim.setHunterCount(MP.seats);
+  for(let i=0;i<sim.hunters.length;i++) sim.hunters[i].mods=MP.room.mods[i];
+  mpBanner(null); flash('THE PARTY HUNTS — '+MP.seats+' BLADES');
+  last=performance.now();
+  return true;
+}
+function myHandshakeMods(){
+  const m=sim.hunterMods();
+  return {speed:m.speed||1, noise:m.noise||0};
+}
+/* the party panel on a normal page (press P) */
+function mpPanel(){
+  if(MP) return;
+  const code=prompt('HUNT TOGETHER\n\nEnter a room code to JOIN a partner,\n'+
+    'or type 2 or 3 to HOST that many hunters.','2');
+  if(!code) return;
+  const v=code.trim();
+  const u=new URLSearchParams(location.search);
+  u.delete('host'); u.delete('join');
+  if(v==='2'||v==='3') u.set('host',v);
+  else if(/^[a-z0-9]{4}$/i.test(v)) u.set('join',v.toUpperCase());
+  else return;
+  location.search=u.toString();
+}
+
+/* ---------- MP session setup (runs once the world is built) ---------- */
+if(mpRoomPre){                                // GUEST
+  MP={room:mpRoomPre, L:null, mySeat:mpRoomPre.seat, seats:mpRoomPre.seats,
+      lossChosen:false};
+  sim.mp=true;
+  mpRoomPre.onStart=(L)=>{
+    MP.L=L; MP.seats=L.seats;
+    sim.setHunterCount(L.seats);
+    /* every read in this file means MY seat from here on */
+    sim.player=sim.hunters[MP.mySeat];
+    camYaw=sim.player.yaw;
+    if(mpRoomPre.mods)
+      for(let i=0;i<sim.hunters.length;i++) sim.hunters[i].mods=mpRoomPre.mods[i];
+    mpBanner(null); flash('THE PARTY HUNTS — SEAT '+(MP.mySeat+1));
+    last=performance.now();
+  };
+  mpRoomPre.sendReady(myHandshakeMods());
+  mpBanner('ROOM '+MPQ.join.toUpperCase()+' — SEAT '+(MP.mySeat+1)+
+    '\n\nwaiting for the host to begin the hunt…');
+} else if(MPQ.host){                          // HOST
+  const wantSeats=Math.max(2,Math.min(3,parseInt(MPQ.host,10)||2));
+  mpBanner('OPENING A ROOM…');
+  hostRoom(window.Peer,
+    {seats:wantSeats, seed:SEED, ground:GROUND, profile:PROFILE,
+     myMods:myHandshakeMods()}, mpEvent)
+    .then(room=>{
+      MP={room, L:null, mySeat:0, seats:wantSeats, lossChosen:false};
+      sim.mp=true;
+      mpBanner(mpHostText(room));
+    })
+    .catch(e=>mpBanner('COULD NOT OPEN A ROOM — '+e));
+}
+
+/* ============================================================
    LOOP
    ============================================================ */
 setOptic(0); applySky();
@@ -2620,21 +2887,43 @@ function stepFrame(dt, withInput){
   if(wakeOpen){ updateWound(dt); post.update(dt,sim.simSec); drawFrame(); frames++; return; }
   if(reckOpen){ reckT+=dt; post.update(dt,sim.simSec); drawFrame(); frames++; return; }
   if(shipOpen||hallOpen||mktOpen){ frames++; return; }  // not down there at all
-  if(withInput) movePlayer(dt); else placeCamera(dt);
-  lastPer=sim.step(dt);
-  if(lastPer && lastPer.broke){
-    if(lastPer.broke.tier==='bleeding') onWounded(lastPer.broke);
-    else onBroken(lastPer.broke);
+  if(MP || MPQ.host || MPQ.join){
+    /* ⚠️ the lobby holds the world FROM FRAME ONE — gated on the URL params,
+       not on MP, because hostRoom resolves ASYNC and a second of free-running
+       sim.step before it lands means the guest builds a world the host has
+       already stepped: guaranteed desync at the first hash audit (found live,
+       tick 100, first two-tab session) */
+    if(!MP || !MP.L){ placeCamera(dt); drawFrame(); frames++; return; }
+    placeCamera(dt);
+    mpAccum+=dt; let n=0;
+    while(mpAccum>=0.05 && n++<8){
+      mpAccum-=0.05;
+      /* never run input more than the delay window ahead of execution */
+      if(MP.L.inTick - MP.L.tick <= INPUT_DELAY){ mpQueueMove(); MP.L.flush(); }
+      if(MP.L.canStep()){ mpStall=0; mpHandle(MP.L.execTick(sim)); }
+      else { mpStall+=0.05; mpAccum=0; break; }   // waiting on the wire
+    }
+    if(MP.L.inSync!==false){
+      if(mpStall>0.6 && !mpStallBan){ mpStallBan=true; mpBanner('WAITING FOR THE PARTY…'); }
+      else if(mpStall===0 && mpStallBan){ mpStallBan=false; mpBanner(null); }
+    }
+  } else {
+    if(withInput) movePlayer(dt); else placeCamera(dt);
+    lastPer=sim.step(dt);
+    if(lastPer && lastPer.broke){
+      if(lastPer.broke.tier==='bleeding') onWounded(lastPer.broke);
+      else onBroken(lastPer.broke);
+    }
+    if(lastPer && lastPer.justSpooked){
+      spooked++;
+      flash(sim.Q.gone?'IT HAS HAD ENOUGH OF YOU'
+        :'IT KNOWS — IT '+(sim.Q.lastChannel==='SIGHT'?'SAW YOU'
+          :sim.Q.lastChannel==='SCENT'?'CAUGHT YOUR SCENT':'HEARD YOU'));
+    }
   }
-  if(lastPer && lastPer.justSpooked){
-    spooked++;
-    flash(sim.Q.gone?'IT HAS HAD ENOUGH OF YOU'
-      :'IT KNOWS — IT '+(sim.Q.lastChannel==='SIGHT'?'SAW YOU'
-        :sim.Q.lastChannel==='SCENT'?'CAUGHT YOUR SCENT':'HEARD YOU'));
-  }
-  drawQuarry(); drawFauna(); drawClan(); drawColonists();
+  drawQuarry(); drawFauna(); drawClan(); drawColonists(); drawPartners();
   drawCarrion(); drawBlood(); updateCalls(dt);
-  maybeSendHunter(dt);
+  if(!MP) maybeSendHunter(dt);      // Bad Blood is a solo spiral (sim-gated too)
   drawTracks(); drawPuffs(dt); drawCover(); updateSpears(dt); updateBlade(dt);
   if(waterGlint){ const o=waterGlint.material.map.offset;
     o.x+=dt*0.008; o.y-=dt*0.005; }
@@ -2697,6 +2986,7 @@ window.__Q={sim,PROFILES,frames:()=>frames,optic:()=>optic,setOptic,
   fauna:()=>sim.fauna, census:()=>sim.census(), faunaViews, sfx,
   buildCreature, planOf,
   wgen:()=>sim.wgen, law:()=>sim.law, biome:()=>sim.biome,
+  /* M12 */ qNetTest, mp:()=>MP, mpStart, partnerViews,
   universe, openShip, closeShip, renderShip, shipOpen:()=>shipOpen,
   openHall, closeHall, renderHall, hallOpen:()=>hallOpen,
   openMarket, closeMarket, renderMarket, mktOpen:()=>mktOpen,

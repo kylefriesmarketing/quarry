@@ -443,6 +443,68 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
   /* where you wake when you are broken */
   sim.ship = { x: sim.player.x, z: sim.player.z };
   sim.lastReckoning = null;
+
+  /* ============================================================
+     M12 — THREE HUNTERS. `sim.hunters[0]` IS `sim.player` (same object, so
+     every single-hunter code path and all prior tests keep meaning what
+     they meant). Seats 1–2 are the partners: three scent volumes, three
+     noise radii, three chances someone breaks cover (§11).
+     `mods` per seat is exchanged at the MP handshake and static in-session —
+     each client's kit/injury economy stays its own; only what the WORLD can
+     sense (position, noise, cloak, bleed) lives here.
+     ============================================================ */
+  sim.player.seat = 0;
+  sim.player.mods = null;              // null = seat 0 uses the live hunterMods
+  sim.player.cmd = null;
+  sim.hunters = [sim.player];
+  sim.mp = false;                      // true = lockstep: commands move seats
+
+  sim.setHunterCount = function(n){
+    n = Math.max(1, Math.min(3, n|0));   // three, not four — canon (§11)
+    while(sim.hunters.length > n) sim.hunters.pop();
+    while(sim.hunters.length < n){
+      const i = sim.hunters.length;
+      sim.hunters.push({
+        seat:i, x:sim.ship.x + i*2.5, z:sim.ship.z + i*1.5, yaw:0,
+        moving:false, crouch:false, slow:false, noise:0, scentStrength:1.0,
+        cloaked:false, spears:3, bleed:0,
+        mods:{ speed:1, noise:0 },     // handshake values; static in-session
+        cmd:null
+      });
+    }
+    return sim.hunters.length;
+  };
+
+  /* one seat's input for the CURRENT tick. In MP this is the only way a
+     hunter moves; every client applies the identical command set. */
+  sim.hunterCmd = function(seat, cmd){
+    const h = sim.hunters[seat]; if(!h) return;
+    h.cmd = cmd;
+  };
+
+  sim.moveHunter = function(h, dt){
+    const c = h.cmd; if(!c) { h.moving=false; return; }
+    h.yaw = c.yaw ?? h.yaw;
+    h.crouch = !!c.crouch; h.slow = !!c.slow;
+    if(c.cloak !== undefined) h.cloaked = !!c.cloak;
+    /* a thrown spear / a swing / a call is LOUD — the spike rides the
+       move command so every client hears the same hunter */
+    if(c.n) h.noise = Math.max(h.noise, c.n);
+    let fx = c.fx||0, fz = c.fz||0;
+    h.moving = !!(fx||fz);
+    if(h.moving){
+      const l=Math.hypot(fx,fz); fx/=l; fz/=l;
+      const m = (h.seat===0 && !sim.mp) ? sim.hunterMods()
+              : (h.mods || {speed:1, noise:0});
+      let sp=(h.crouch?1.6:h.slow?2.1:5.0)*(m.speed||1);
+      if(h.bleed>0) sp*=BLEED_SPEED;
+      /* the camera basis from the M1 fix — same math the view used */
+      const cs=Math.cos(h.yaw), sn=Math.sin(h.yaw);
+      const nx=h.x+(fx*cs+fz*sn)*sp*dt, nz=h.z+(-fx*sn+fz*cs)*sp*dt;
+      if(Math.abs(nx)<WORLD_SIZE*0.47 && Math.abs(nz)<WORLD_SIZE*0.47 &&
+         world.heightAt(nx,nz)>WATER_Y-0.3){ h.x=nx; h.z=nz; }
+    }
+  };
   /* THIS WORLD's law, biome and biology (M4) */
   sim.groundKey = groundKey;
   sim.wgen = wgen;
@@ -502,37 +564,51 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
   sim.hasKit = k => !!sim.hunter.kit[k];
 
   /* ---------- player signature on each channel ---------- */
-  sim.playerNoise = function(dt){
-    const p=sim.player, mod=sim.hunterMods();
+  /* per-seat noise: seat 0 reads the live injury mods; partners carry the
+     static mods from the MP handshake, plus any in-session bleed */
+  sim.hunterNoise = function(h, dt){
+    /* ⚠️ MP: EVERY seat uses its static handshake mods — sim.hunterMods()
+       reads the LOCAL client's kit, which differs per client and would
+       desync the noise the whole world hears */
+    const mod = (h.seat===0 && !sim.mp) ? sim.hunterMods()
+              : { noise:((h.mods&&h.mods.noise)||0)+(h.bleed>0?BLEED_NOISE:0) };
     let n;
-    if(p.moving){
-      n = p.crouch?0.16 : p.slow?0.30 : 0.78;
-      n *= 0.55 + world.substrateAt(p.x,p.z)*0.9;
-      n *= 1 + world.coverAt(p.x,p.z)*0.35;
+    if(h.moving){
+      n = h.crouch?0.16 : h.slow?0.30 : 0.78;
+      n *= 0.55 + world.substrateAt(h.x,h.z)*0.9;
+      n *= 1 + world.coverAt(h.x,h.z)*0.35;
       n *= 1 + mod.noise;                 // a limp, cracked ribs: stillness costs
     } else n = 0.02 + mod.noise*0.06;     // broken ribs are audible standing still
-    p.noise += (n-p.noise)*Math.min(1,dt*6);
-    return p.noise;
+    h.noise += (n-h.noise)*Math.min(1,dt*6);
+    return h.noise;
   };
+  sim.playerNoise = function(dt){ return sim.hunterNoise(sim.player, dt); };
 
-  /* SCENT: how much of you reaches a point. Upwind = zero, always. */
-  sim.scentAt = function(tx,tz){
-    const p=sim.player, w=sim.windVec();
-    const dx=tx-p.x, dz=tz-p.z, dist=Math.hypot(dx,dz);
+  /* SCENT: how much of ONE hunter reaches a point. Upwind = zero, always. */
+  sim.scentFrom = function(h, tx, tz){
+    const w=sim.windVec();
+    const dx=tx-h.x, dz=tz-h.z, dist=Math.hypot(dx,dz);
     if(dist<0.001) return 1;
     const along = (dx/dist)*w.x + (dz/dist)*w.z;
     if(along<=0.02) return 0;
     const cone = Math.pow(Math.max(0,along), 3.0);
     const carry = 30 + sim.wind.strength*46;
     const fall = Math.max(0, 1-dist/carry);
-    return cone*fall*fall*p.scentStrength*(0.45+sim.wind.strength*0.75);
+    return cone*fall*fall*h.scentStrength*(0.45+sim.wind.strength*0.75);
+  };
+  /* ⚠️ THREE SCENT VOLUMES (§11): what a nose smells is the STRONGEST of the
+     party — one partner standing upwind ruins everyone's stalk, and that is
+     the whole content of co-op. Single-hunter results are byte-identical. */
+  sim.scentAt = function(tx,tz){
+    let s=0;
+    for(const h of sim.hunters) s=Math.max(s, sim.scentFrom(h,tx,tz));
+    return s;
   };
 
   /* SIGHT: ordered cones (Thief), gated by cover, light, motion, LOS, cloak. */
-  sim.sightAt = function(ox,oz,facing){
-    const p=sim.player;
-    if(prof.sight<=0 || p.cloaked) return 0;
-    const dx=p.x-ox, dz=p.z-oz, dist=Math.hypot(dx,dz);
+  sim.sightFrom = function(h, ox, oz, facing){
+    if(prof.sight<=0 || h.cloaked) return 0;
+    const dx=h.x-ox, dz=h.z-oz, dist=Math.hypot(dx,dz);
     if(dist>prof.sightRange) return 0;
     let ang = Math.atan2(dx,dz) - facing;
     while(ang>Math.PI) ang-=Math.PI*2; while(ang<-Math.PI) ang+=Math.PI*2;
@@ -541,12 +617,18 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
     if(a < prof.fov*0.5)            coneMul = 1.0;      // direct
     else if(a < prof.peripheral*0.5) coneMul = 0.45;    // peripheral
     else                             coneMul = 0.06;    // rear "spidey-sense"
-    const py = world.heightAt(p.x,p.z) + (p.crouch?1.05:1.7);
-    if(!world.hasLOS(ox, world.heightAt(ox,oz)+2.6, oz, p.x, py, p.z)) return 0;
+    const py = world.heightAt(h.x,h.z) + (h.crouch?1.05:1.7);
+    if(!world.hasLOS(ox, world.heightAt(ox,oz)+2.6, oz, h.x, py, h.z)) return 0;
     const distF = Math.max(0, 1 - dist/prof.sightRange);
-    const conceal = world.coverAt(p.x,p.z) * (p.crouch?0.92:0.45);
-    const motion  = p.moving ? (p.crouch?0.55:p.slow?0.75:1.0) : 0.30;
+    const conceal = world.coverAt(h.x,h.z) * (h.crouch?0.92:0.45);
+    const motion  = h.moving ? (h.crouch?0.55:h.slow?0.75:1.0) : 0.30;
     return coneMul * distF*distF * (1-conceal) * motion * sim.lightLevel();
+  };
+  /* three chances someone breaks cover (§11) — the eye catches the WORST of you */
+  sim.sightAt = function(ox,oz,facing){
+    let s=0;
+    for(const h of sim.hunters) s=Math.max(s, sim.sightFrom(h,ox,oz,facing));
+    return s;
   };
 
   /* ---------- schedule ---------- */
@@ -573,7 +655,7 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
 
   /* ---------- the quarry ---------- */
   sim.updateQuarry = function(dt){
-    const Q=sim.Q, p=sim.player;
+    const Q=sim.Q; let p=sim.player;
     /* ⚠️ the world bound is UNCONDITIONAL. It used to live inside the movement
        branch, so anything that placed the quarry while it was gone/dead (an
        early return) was never clamped back and it could sit outside the world. */
@@ -589,12 +671,25 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
     if(Q.state==='BEDDED'){ Q.speed=0; return; }
     Q.stateT+=dt;
 
-    const noise = sim.playerNoise(dt);
+    /* ⚠️ THE FOCUS SEAT (M12). Every hunter's noise ticks every frame; the
+       beast reacts to the LOUDEST/CLEAREST of the party, flees from and
+       charges THAT one. With one hunter this reduces byte-identically to
+       the old code — `p` below is the focus, and the focus of a party of
+       one is the player. */
+    let focus=p, hearing=0, smell=0, seeing=0;
+    for(const h of sim.hunters){
+      const hn = sim.hunterNoise(h, dt);
+      const hd = Math.hypot(Q.x-h.x, Q.z-h.z);
+      const hHear = Math.max(0, 1 - hd/(9 + hn*prof.hearRange)) * hn * prof.sound;
+      const hSmell= sim.scentFrom(h, Q.x, Q.z) * prof.scent;
+      const hSee  = sim.sightFrom(h, Q.x, Q.z, Q.facing) * prof.sight;
+      if(Math.max(hHear,hSmell,hSee) >= Math.max(hearing,smell,seeing)){
+        focus=h; hearing=hHear; smell=hSmell; seeing=hSee;
+      }
+    }
+    p = focus;
+    const noise = p.noise;
     const d = Math.hypot(Q.x-p.x, Q.z-p.z);
-
-    const hearing = Math.max(0, 1 - d/(9 + noise*prof.hearRange)) * noise * prof.sound;
-    const smell   = sim.scentAt(Q.x,Q.z) * prof.scent;
-    const seeing  = sim.sightAt(Q.x,Q.z,Q.facing) * prof.sight;
 
     /* strongest channel wins (Thief) - and we remember WHICH, so the
        player can be told what betrayed them */
@@ -666,8 +761,7 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
       spd=CHARGE_SPEED;
       /* first strike opens you up; a strike while already bleeding breaks you */
       if(d<=CONTACT_R){
-        broke = sim.hunter.bleed>0 ? sim.breakHunter('charge')
-                                   : sim.woundHunter('charge');
+        broke = sim.strikeSeat(p, 'charge', Q);
       }
       else if(Q.stateT>CHARGE_MAX){ Q.charging=false; Q.state='FLEE'; Q.stateT=0;
         if(Q.quarryInitiated) Q.quarryDisengaged=true; }
@@ -804,8 +898,11 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
      straight through one and nothing happened. (Kyle found this by playing;
      no test caught it because every test struck the quarry.) */
   sim.strike = function({dist, part='body', thrown=true, lethal=true, target=null,
-                         weapon=null}){
+                         weapon=null, by=null}){
     const Q=target||sim.Q, H=sim.hunter, sp=sim.species[Q.species];
+    /* M12: `by` = which SEAT threw. Defaults to seat 0; a partner's strike
+       grades on the partner's cloak, and the party splits the condition. */
+    const striker = by || sim.player;
     if(!Q.alive){
       /* OVERKILL — going on striking a dead thing. Recorded, and it voids. */
       Q.strikes++;
@@ -827,12 +924,12 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
        flag first would silently make the highest grade unreachable. */
     const wasCharging = Q.charging || Q.state==='CHARGE';
 
-    const approach = gradeApproach(dist, sim.player.cloaked, Q);
+    const approach = gradeApproach(dist, striker.cloaked, Q);
     const run = (H.lastApproach[Q.species]===approach) ? (H.approachRun[Q.species]||0) : 0;
 
     const ctx = {
       tier:Q.tier, specimenPct:Q.specimenPct,
-      cloaked:sim.player.cloaked, everAware:Q.everAware,
+      cloaked:striker.cloaked, everAware:Q.everAware,
       dist, reach:sp.reach, engageRange:CHARGE_RANGE, thrown,
       drewBlood:Q.drewBlood, wasCharging,
       gaveGround:H.gaveGround, strikes:Q.strikes,
@@ -850,7 +947,7 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
       witnessed: H.witnessed,
       integrity: part==='skull' ? INTEGRITY.skull
                : part==='vitals' ? INTEGRITY.clean : INTEGRITY.bodyDamage,
-      party:1, consecutive:run,
+      party:sim.hunters.length, consecutive:run,
       gravid:Q.gravid, noThreat: sp.threat<=0
     };
 
@@ -935,7 +1032,7 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
      else finish your quarry" scores zero.
      ============================================================ */
   sim.updateClaims = function(){
-    const p=sim.player;
+    /* M12: ANY hunter of the party standing over it claims for the party */
     for(const k of sim.carrion){
       if(!k.claim) continue;
       const sp=sim.species[k.species];
@@ -945,7 +1042,7 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
         rec.bounty=0; rec.species=sp?sp.label:'—';
         rec.at=sim.simSec; rec.trailed=true;
         sim.bankTrophy(rec); sim.claimed=rec; k.claim=null;
-      } else if(Math.hypot(k.x-p.x, k.z-p.z) < CLAIM_R){
+      } else if(sim.hunters.some(h=>Math.hypot(k.x-h.x, k.z-h.z) < CLAIM_R)){
         const rec=trophyScore(k.claim.ctx);
         rec.bounty=bountyValue({...k.claim.ctx, method:rec.method});
         rec.species=sp?sp.label:'—';
@@ -972,6 +1069,146 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
      fight with you. Its spook count is set to 2, so one more press brings it
      back through you — and this time you are bleeding, which is the second
      strike. That escalation IS the Contest. */
+  /* ============================================================
+     M12 — a strike lands on a SEAT. Seat 0 in single-player takes the full
+     personal path (kit, injuries, blackout — exactly as before). Any seat
+     in lockstep takes the SLIM path: every client consumes the SAME rng
+     draws and mutates the SAME world state; only the victim's client applies
+     the personal consequences from the returned event.
+     ⚠️ In MP there is NO blackout — a break cannot yank three hunters'
+     shared clock (the bible's co-op day question, answered: the day is
+     shared and nobody's failure spends it).
+     ============================================================ */
+  sim.pendingLossSeat = null;
+  /* the world's actors take the NEAREST of the party — deterministic on
+     every client, and the person who wandered closest pays for it */
+  sim.nearestHunter = function(x,z){
+    let best=sim.hunters[0], bd=1e18;
+    for(const h of sim.hunters){
+      const d=(h.x-x)*(h.x-x)+(h.z-z)*(h.z-z);
+      if(d<bd){ bd=d; best=h; }
+    }
+    return best;
+  };
+  sim.strikeSeat = function(h, cause, by){
+    if(h.seat===0 && !sim.mp){
+      return sim.hunter.bleed>0 ? sim.breakHunter(cause) : sim.woundHunter(cause, by);
+    }
+    const Q = by || sim.Q, rng = world.rng;
+    if(h.bleed>0){
+      /* BROKEN. Identical rng draws on every client; personal application
+         is the victim's business. */
+      const key = INJURY_KEYS[Math.floor(rng()*INJURY_KEYS.length)];
+      h.bleed = 0;
+      h.x = sim.ship.x + h.seat*2.5; h.z = sim.ship.z + h.seat*1.5;
+      h.moving=false; h.cloaked=false; h.noise=0; h.spears=3;
+      /* the beast keeps a piece — WHICH piece arrives later as a command */
+      sim.pendingLossSeat = h.seat;
+      Q.gone=false; Q.charging=false; Q.spooks=0; Q.awareness=0;
+      Q.alertState='CALM'; Q.state='TRAVEL'; Q.stateT=0;
+      Q.wary=Math.min(3,(Q.wary||0)+1);
+      const want=sim.zoneForTime(), lim=WORLD_SIZE*0.47;
+      Q.x=Math.max(-lim,Math.min(lim, want.z.x+(rng()-0.5)*46));
+      Q.z=Math.max(-lim,Math.min(lim, want.z.z+(rng()-0.5)*46));
+      return {tier:'broken', seat:h.seat, cause, injury:key, mp:true,
+              options:KIT_TAKEABLE.slice()};
+    }
+    h.bleed = BLEED_HOURS/24*DAY_SEC;
+    Q.drewBlood = true;
+    Q.charging=false; Q.gone=false; Q.state='FLEE'; Q.stateT=0;
+    Q.awareness = Math.min(Q.awareness, SPOOK_AT-0.03);
+    Q.alertState='ALERT';
+    if(Q===sim.Q) Q.spooks = 2;
+    Q.wary = Math.min(3,(Q.wary||0)+1);
+    return {tier:'bleeding', seat:h.seat, cause};
+  };
+  /* the broken player chose what the beast keeps — arrives as a lockstep
+     command so every client's Q.carrying agrees */
+  sim.applyLossCmd = function(seat, key){
+    if(sim.pendingLossSeat!==seat) return false;
+    sim.pendingLossSeat = null;
+    sim.Q.carrying = key;
+    return true;
+  };
+
+  /* ============================================================
+     M12 — THE LOCKSTEP TICK. AoT's pattern: commands are SEMANTIC (the
+     local client resolves its own aim; the command carries the result),
+     every client applies the identical command set in the identical order,
+     then steps the identical fixed dt. Nothing else moves a seat in MP.
+     ============================================================ */
+  sim.MP_TICK = 0.05;                        // 20Hz, same as Age of Toys
+  sim.applyCmd = function(seat, c){
+    const h = sim.hunters[seat]; if(!h || !c) return null;
+    switch(c.t){
+      case 'move':  sim.hunterCmd(seat, c); return null;
+      case 'loss':  sim.applyLossCmd(seat, c.key); return null;
+      case 'reed':  sim.callQuarry(h); return null;
+      case 'strike': {
+        if(c.target==='clan')
+          return sim.strikeClan({dist:c.dist, part:c.part||'body'});
+        /* fauna index is deterministic — the array is seeded worldgen,
+           mutated identically on every client */
+        const target = (c.target==null || c.target==='Q') ? null
+                     : (sim.fauna[c.target] || null);
+        if(target===null && c.target!=null && c.target!=='Q') return null;
+        const rec = sim.strike({dist:c.dist, part:c.part||'body',
+                                thrown:c.thrown!==false, target,
+                                weapon:c.weapon||null, by:h});
+        /* the nemesis take-back, sim-side: the kill clears what it carried
+           on EVERY client; the striking client grants itself the kit when
+           it sees `took` on the echo */
+        const T = target || sim.Q;
+        if(rec && !rec.wounded && !rec.overkill && T.carrying){
+          rec.took=T.carrying; T.carrying=null; }
+        return rec;
+      }
+      case 'miss': {
+        /* a spear in the dirt spooks whatever is near it */
+        const Q=sim.Q;
+        if(Q.alive && !Q.gone && Math.hypot(c.x-Q.x, c.z-Q.z)<28)
+          Q.awareness=Math.min(1, Q.awareness+0.5);
+        return null;
+      }
+      case 'charge': {
+        /* stand into a charge with the blade — the offered-fight path */
+        return sim.applyCmd(seat, {...c, t:'strike', thrown:false});
+      }
+      case 'strikeCol': {
+        const q = sim.colony && sim.colony.people[c.idx];
+        if(!q) return null;
+        return sim.strikeColonist({target:q, dist:c.dist, part:c.part||'body', by:h});
+      }
+    }
+    return null;
+  };
+  /* one lockstep frame: the merged command list for this tick, in seat-then-
+     arrival order (host-canonical), then movement, then the world. */
+  sim.mpTick = function(cmds){
+    const res = [];
+    for(const [seat, c] of (cmds||[])){
+      const r = sim.applyCmd(seat, c);
+      if(r) res.push({seat, cmd:c, rec:r});
+    }
+    for(const h of sim.hunters){ sim.moveHunter(h, sim.MP_TICK); sim.hunterNoise(h, sim.MP_TICK); }
+    const per = sim.step(sim.MP_TICK);
+    for(const h of sim.hunters) h.cmd = null;   // a move lasts ONE tick
+    return {per, res};
+  };
+  /* the MP fingerprint hashes what every client must agree on — the world
+     AND every seat — but NOT the personal ledgers (honor, doctrine, kit),
+     which are each client's own business by design. */
+  sim.mpFingerprint = function(){
+    const v=[sim.simSec, sim.frame||0, sim.Q.x, sim.Q.z, sim.Q.awareness,
+             sim.Q.state==='CHARGE'?1:0, sim.Q.wary, sim.Q.alive?1:0,
+             sim.wind.dir, sim.pendingLossSeat==null?-1:sim.pendingLossSeat];
+    for(const h of sim.hunters) v.push(h.x, h.z, h.noise, h.bleed, h.cloaked?1:0);
+    for(const c of sim.fauna) v.push(c.x, c.z, c.alive?1:0, c.awareness, c.hunger||0);
+    let hsh=5381;
+    for(const n of v){ hsh=((hsh*33) ^ Math.round((+n||0)*10000)) >>> 0; }
+    return hsh;
+  };
+
   /* ⚠️ `by` is WHICH ANIMAL opened you up, and it defaults to the player's
      quarry. Once M5 put predators in the world this stopped being a
      formality: an apex mauling you was resetting the STILT-GRAZER's spook
@@ -1174,8 +1411,8 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
      to investigate — with every sense still working. You are inviting the
      thing that can kill you to come closer. That is the whole deal.
      ============================================================ */
-  sim.callQuarry = function(){
-    const Q=sim.Q, p=sim.player;
+  sim.callQuarry = function(from){
+    const Q=sim.Q, p=from||sim.player;
     if(!Q.alive || Q.gone) return {answered:false, why:'nothing to hear it'};
     const d=Math.hypot(Q.x-p.x, Q.z-p.z);
     if(d>140) return {answered:false, why:'too far'};
@@ -1256,7 +1493,8 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
     sim.tickWound(c, dt);
     if(!c.alive || c.gone) return;
     if(c.state==='BEDDED'){ c.speed=0; return; }
-    const sp = sim.species[c.species], p = sim.player;
+    /* M12: fauna react to the NEAREST of the party */
+    const sp = sim.species[c.species], p = sim.nearestHunter(c.x, c.z);
     c.stateT += dt;
     /* ⚠️ HUNGER IS AN IN-WORLD-DAY CLOCK, NOT A MINUTE ONE. At 0.004/s a
        predator starved in 90 seconds and therefore killed every 90 seconds —
@@ -1285,7 +1523,7 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
       /* ⚠️ AND IT HUNTS BACK. An apex that has noticed you and is hungry
          treats you as prey. Being hunted is the point, not a fail state. */
       const huntsPlayer = c.awareness > ALERT_AT && c.hunger > 0.45 && dp < HUNT_RANGE;
-      let prey = huntsPlayer ? {x:p.x, z:p.z, isPlayer:true} : null;
+      let prey = huntsPlayer ? {x:p.x, z:p.z, isPlayer:true, h:p} : null;
       if(!prey){
         let best=1e9;
         for(const o of sim.fauna){
@@ -1304,8 +1542,7 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
           if(prey.isPlayer){
             /* the two-tier wound, from the other side of the food web —
                and THIS animal is the one that becomes your nemesis */
-            if(sim.hunter.bleed>0) sim.breakHunter('hunted', c);
-            else sim.woundHunter('hunted', c);
+            sim.strikeSeat(prey.h || sim.player, 'hunted', c);
             c.hunger = Math.max(0, c.hunger-0.5);
           } else {
             prey.alive=false; prey.gone=true;
@@ -1490,6 +1727,9 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
                  cloakRange:26, hunt:150, patience:0.55 };
 
   sim.spawnClanHunter = function(){
+    /* M12: Bad Blood is a PERSONAL spiral — per-client disgrace would desync
+       the spawn, so the clan hunter never walks into a shared hunt */
+    if(sim.mp) return null;
     if(sim.clan) return sim.clan;
     const rng=world.rng, lim=WORLD_SIZE*0.42;
     /* they arrive at the edge of your world and walk in */
@@ -1507,7 +1747,7 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
 
   sim.updateClan = function(dt){
     const C=sim.clan; if(!C || !C.alive) return null;
-    const p=sim.player;
+    const p=sim.nearestHunter(C.x, C.z);
     C.stateT+=dt; if(C.strikeT>0) C.strikeT-=dt;
     const d=Math.hypot(C.x-p.x, C.z-p.z);
 
@@ -1531,7 +1771,7 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
       C.speed = spd;
       if(d <= CLAN.reach && C.strikeT<=0){
         C.strikeT = CLAN.strikeCd; C.struck++;
-        broke = sim.hunter.bleed>0 ? sim.breakHunter('clan') : sim.woundHunter('clan');
+        broke = sim.strikeSeat(p, 'clan');
       }
     } else {
       /* casting for your trail */
@@ -1607,25 +1847,33 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
 
   sim.updateColony = function(dt){
     const C = sim.colony; if(!C) return null;
-    const p = sim.player;
-    let anyWitness = false, broke = null;
+    const seatSeen = sim.hunters.map(()=>false);
+    let broke = null;
     if(C.alarm > 0) C.alarm -= dt;
 
     for(const q of C.people){
       if(!q.alive) continue;
       q.stateT += dt; if(q.shootT>0) q.shootT -= dt;
       const K = KINDS[q.kind];
-      const d = Math.hypot(q.x-p.x, q.z-p.z);
-      const py = world.heightAt(p.x,p.z)+(p.crouch?1.05:1.7);
-      const los = world.hasLOS(q.x, world.heightAt(q.x,q.z)+1.7, q.z, p.x, py, p.z);
 
       /* ⚠️ THEY HEAR YOU TOO. Sight-only detection deadlocked: colonists walk
          along their facing, so the player ends up permanently behind them and
          a settlement could be stood next to at noise 0.92 without one of them
          ever turning round. Every quarry perceives on three channels (§3) —
-         people are not an exception. */
-      const sees  = seenBy(q, p, d, los);
-      const heard = Math.max(0, 1 - d/(10 + p.noise*46)) * p.noise * (p.cloaked?0.6:1);
+         people are not an exception.
+         M12: each colonist reads EVERY hunter and engages the most exposed
+         one; being SEEN marks that seat, not the whole party. */
+      let p=sim.hunters[0], d=0, los=false, sees=false, heard=0, best=-Infinity;
+      for(const h of sim.hunters){
+        const hd  = Math.hypot(q.x-h.x, q.z-h.z);
+        const hy  = world.heightAt(h.x,h.z)+(h.crouch?1.05:1.7);
+        const hlos = world.hasLOS(q.x, world.heightAt(q.x,q.z)+1.7, q.z, h.x, hy, h.z);
+        const hsees  = seenBy(q, h, hd, hlos);
+        const hheard = Math.max(0, 1 - hd/(10 + h.noise*46)) * h.noise * (h.cloaked?0.6:1);
+        if(hsees && !K.valid) seatSeen[h.seat] = true;
+        const score = (hsees?2:0) + hheard - hd*1e-6;
+        if(score > best){ best=score; p=h; d=hd; los=hlos; sees=hsees; heard=hheard; }
+      }
       if(sees || heard > 0.22){
         q.alert = Math.min(1, q.alert + dt*(sees?0.9:0.45));
         /* ⚠️ COORDINATION: one who notices you tells everyone in earshot. This
@@ -1634,8 +1882,8 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
            colonist could open fire without ever raising the alarm */
         if(q.alert > 0.4) C.alarm = Math.max(C.alarm, 12);
         /* ...but only being SEEN makes you witnessed. Hearing a noise is not
-           witnessing what you are, and the void is about being SEEN. */
-        if(sees && !K.valid) anyWitness = true;
+           witnessing what you are, and the void is about being SEEN —
+           per-seat, marked in the hunter scan above. */
         /* something heard turns to look */
         if(!sees && heard>0.22) q.facing = Math.atan2(p.x-q.x, p.z-q.z);
       } else q.alert = Math.max(0, q.alert - dt*0.35);
@@ -1655,8 +1903,7 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
         if(d < ENGAGE_RANGE && los && q.shootT<=0 && !p.cloaked){
           q.shootT = SHOOT_CD;
           /* they hit you through the same two tiers everything else does */
-          broke = sim.hunter.bleed>0 ? sim.breakHunter('colonist')
-                                     : sim.woundHunter('colonist');
+          broke = sim.strikeSeat(p, 'colonist');
         }
       } else {                                // UNWORTHY: run, and remember
         q.state='FLEEING';
@@ -1671,7 +1918,7 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
     /* ⚠️ THE WITNESS VOID (§5). Being seen by someone you are forbidden to
        kill is a problem you must solve by BREAKING CONTACT — you cannot solve
        it with the blade, because that is the other void. */
-    if(anyWitness){
+    if(seatSeen[0]){
       sim.unseenT = 0;
       sim.witnessT += dt;
       if(sim.witnessT > WITNESS_GRACE) sim.hunter.witnessed = true;
@@ -1679,21 +1926,33 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
       sim.unseenT += dt;
       if(sim.unseenT > WITNESS_BREAK){ sim.witnessT = 0; sim.hunter.witnessed = false; }
     }
+    /* partner seats carry their own witness clocks (banked locally per client) */
+    for(let i=1;i<sim.hunters.length;i++){
+      const h=sim.hunters[i];
+      if(seatSeen[i]){
+        h.unseenT=0; h.witnessT=(h.witnessT||0)+dt;
+        if(h.witnessT > WITNESS_GRACE) h.witnessed = true;
+      } else {
+        h.unseenT=(h.unseenT||0)+dt;
+        if(h.unseenT > WITNESS_BREAK){ h.witnessT=0; h.witnessed=false; }
+      }
+    }
     return broke;
   };
 
   /* Striking a colonist. Armed ones are the best quarry in the game; the
      others are a void with a name attached. */
-  sim.strikeColonist = function({target, dist, part='body'}){
+  sim.strikeColonist = function({target, dist, part='body', by=null}){
     const q = target, H = sim.hunter;
     if(!q || !q.alive) return {miss:true};
     const K = KINDS[q.kind], v = validityOf(q.kind);
+    const striker = by || sim.player;
     q.alive = false;
     if(sim.colony) sim.colony.alarm = 20;     // the rest hear it happen
 
     const ctx = {
       tier:K.tier, specimenPct: K.valid ? 0.9 : 0.4,
-      cloaked:sim.player.cloaked, everAware:q.alert>0.3,
+      cloaked:striker.cloaked, everAware:q.alert>0.3,
       dist, reach:K.reach, engageRange:ENGAGE_RANGE, thrown:true,
       drewBlood:H.bleed>0, wasCharging:q.state==='CLOSING'||q.state==='FIRING',
       gaveGround:H.gaveGround, strikes:1,
