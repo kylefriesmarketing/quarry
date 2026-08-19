@@ -390,7 +390,8 @@
 import * as THREE from 'three';
 import {createSim, makeRNG, PROFILES, WORLD_SIZE, WATER_Y, GRID,
         INJURIES, KIT} from './sim.js';
-import {LOCOMOTION, LAWS, BIOMES} from './worldgen.js';
+import {LOCOMOTION, LAWS, BIOMES, CLAN_GROUNDS, GROUND_KEYS, GROUND_RANK,
+        clanGroundAt} from './worldgen.js';
 import {METHOD, TIERS, bandOf, standing, rankOf, nextRank, RANKS,
         DOCTRINES, DOCTRINE_KEYS, STANDING_WINDOW,
         disgrace, fallOf, FALL} from './scoring.js';
@@ -430,7 +431,11 @@ const URL_SEED=QS.get('seed');
 const SEED=URL_SEED!==null ? parseInt(URL_SEED,10) : universe.worldSeed();
 const PROFILE=PROFILES[QS.get('profile')] ? QS.get('profile')
               : PROFILE_POOL[SEED%PROFILE_POOL.length];
-const sim=createSim(SEED, PROFILE);
+/* M13: if the ship is parked on an Old Ground, the world is AUTHORED.
+   A ?seed override is a dev/share path and stays a rolled world. */
+const GROUND = URL_SEED!==null ? null
+             : clanGroundAt(universe.at.sx, universe.at.sy, universe.at.idx);
+const sim=createSim(SEED, PROFILE, GROUND);
 const W=sim.world;
 
 /* ⚠️ THE VIEW GETS ITS OWN RNG. Scenery placement used to draw from W.rng —
@@ -2292,6 +2297,41 @@ function renderShip(){
   /* a hulk in orbit HERE is a place you can dock at */
   const hereMk=merchantFor(SEED);
   const cross=el('sh-cross'); cross.innerHTML='';
+
+  /* ============================================================
+     M13 — THE OLD GROUNDS. "Honor buys nothing. It opens things — charts
+     you cannot otherwise reach" (§6). Below rank HUNTER these simply are
+     not on your charts; at 300 standing, three authored hunts appear.
+     ============================================================ */
+  const st=standing(sim.hunter.trophies);
+  if(st >= GROUND_RANK){
+    for(const gk of GROUND_KEYS){
+      const G=CLAN_GROUNDS[gk];
+      const here = universe.at.sx===G.sector.sx && universe.at.sy===G.sector.sy
+                && universe.at.idx===G.sector.idx;
+      const course=universe.courseToCoords(G.sector);
+      const b=document.createElement('button');
+      b.style.borderColor='rgba(197,138,94,.6)'; b.style.color='#c58a5e';
+      b.textContent = here ? '◈ '+G.name+' — YOU ARE HERE'
+        : '◈ '+G.name+'  ('+course.fuel+' FUEL)';
+      b.disabled = here || course.fuel>universe.fuel;
+      b.title = G.lore;
+      if(!here) b.addEventListener('click',()=>{
+        const r=universe.jumpToCoords(G.sector);
+        if(r.ok) leaveFor(r.seed);
+        else el('sh-note').innerHTML='<span class="warn">NOT ENOUGH FUEL — '+
+          'the ground needs '+r.cost+'</span>';
+      });
+      cross.appendChild(b);
+    }
+  } else if(st>0){
+    const n=document.createElement('div');
+    n.className='note';
+    n.style.color='#7a6a58';
+    n.textContent='The elders speak of the Old Grounds. Their charts open at '+
+      'HUNTER ('+GROUND_RANK+' standing — yours is '+Math.round(st)+').';
+    cross.appendChild(n);
+  }
   if(hereMk){
     const b=document.createElement('button');
     b.textContent='⚓ DOCK AT '+hereMk.name;
@@ -2410,7 +2450,11 @@ function showReckoning(rec){
   el('rk-voidwhy').style.display=v?'':'none';
   el('rk-voidwhy').textContent=rec.voidReason||'';
   el('rk-grade').textContent=rec.methodLabel;
-  el('rk-gnote').textContent=METHOD[rec.method].note;
+  el('rk-gnote').textContent = rec.named
+    ? rec.named.marking.charAt(0).toUpperCase()+rec.named.marking.slice(1)+
+      '. '+rec.named.history.charAt(0).toUpperCase()+rec.named.history.slice(1)+
+      ' '+METHOD[rec.method].note
+    : METHOD[rec.method].note;
   const row=(k,val,note)=>'<tr><td>'+k+(note?' <span style="opacity:.55">'+note+
     '</span>':'')+'</td><td class="v">'+val+'</td></tr>';
   el('rk-tbl').innerHTML =
@@ -2440,11 +2484,23 @@ function flash(t){ el('msg').innerHTML=t; el('msg').classList.add('on'); msgT=3.
 el('prof').textContent='QUARRY: '+sim.prof.label.toUpperCase();
 {
   const law=sim.law, bio=sim.biome;
-  document.querySelector('#gate .law').innerHTML =
-    '<i>THE LAW OF THIS WORLD</i><br><br>'+
-    '<b>'+law.label+'</b>'+(sim.wgen.legendary?' <i>(and that is rare)</i>':'')+
-    '<br><br>'+law.line+'<br><br><i>'+law.hunt+'</i>'+
-    '<br><br><span style="opacity:.6">'+bio.label+'</span>';
+  /* M13: on an Old Ground, the gate speaks the WRITTEN lore — this is the
+     one place in the endless universe where the words were chosen */
+  if(sim.wgen.ground){
+    document.querySelector('#gate .law').innerHTML =
+      '<i>AN OLD GROUND OF THE CLANS</i><br><br>'+
+      '<b>'+sim.wgen.groundName+'</b><br><br>'+
+      sim.wgen.lore+'<br><br>'+
+      '<i>'+law.label+' — '+law.hunt+'</i>'+
+      '<br><br><span style="color:#c58a5e">'+sim.wgen.named.name+' '+
+      sim.wgen.named.epithet+' is here. '+sim.wgen.named.history+'</span>';
+  } else {
+    document.querySelector('#gate .law').innerHTML =
+      '<i>THE LAW OF THIS WORLD</i><br><br>'+
+      '<b>'+law.label+'</b>'+(sim.wgen.legendary?' <i>(and that is rare)</i>':'')+
+      '<br><br>'+law.line+'<br><br><i>'+law.hunt+'</i>'+
+      '<br><br><span style="opacity:.6">'+bio.label+'</span>';
+  }
   document.querySelector('#gate .sub').textContent =
     sim.wgen.description.toUpperCase();
 }

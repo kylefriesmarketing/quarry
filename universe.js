@@ -142,6 +142,29 @@ export function createUniverse(galaxySeed = 20260811){
     return e;
   };
 
+  /* M13: a course to FIXED coordinates — the Old Grounds sit at the same
+     sector in every galaxy, so honor opens a chart, not a memory. */
+  u.courseToCoords = function(at){
+    const sectors = Math.abs(at.sx-u.at.sx) + Math.abs(at.sy-u.at.sy);
+    let local = 0;
+    if(sectors === 0){
+      if(at.idx === u.at.idx) return { sectors:0, fuel:0, at:{...at} };
+      const sys = u.sector().find(s=>s.idx===at.idx);
+      local = sys ? jumpCost(u.here(), sys) : JUMP_MIN;
+    } else {
+      local = 40;      // the in-sector leg after the crossings, estimated
+    }
+    return { sectors, fuel: sectors*SECTOR_JUMP + local, at:{...at} };
+  };
+  u.jumpToCoords = function(at){
+    const c = u.courseToCoords(at);
+    if(c.fuel > u.fuel) return { ok:false, reason:'not enough fuel', cost:c.fuel };
+    u.fuel -= c.fuel;
+    if(c.sectors || at.idx !== u.at.idx) u.jumps++;
+    u.at = { sx:at.sx, sy:at.sy, idx:at.idx };
+    return { ok:true, cost:c.fuel, seed:u.worldSeed() };
+  };
+
   /* YOUR CHARTS. A world you have been to can be plotted back to — that is
      what makes it yours rather than one of infinitely many. */
   u.courseTo = function(seed){

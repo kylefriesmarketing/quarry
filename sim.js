@@ -358,14 +358,15 @@ export function createWorld(seed){
 /* ============================================================
    THE SIM
    ============================================================ */
-export function createSim(seed, profileKey='balanced'){
+export function createSim(seed, profileKey='balanced', groundKey=null){
   const world = createWorld(seed);
 
   /* ⚠️ THE LAW gets its OWN rng stream, derived from the seed but separate
      from the terrain's. Otherwise every tweak to heightmap code silently
      rerolls the entire biosphere, and a world you learned stops being the
-     world you learned — which is the one thing §9 promises never happens. */
-  const wgen = generateWorld(seed, makeRNG((seed ^ 0x5eed1) >>> 0));
+     world you learned — which is the one thing §9 promises never happens.
+     M13: `groundKey` swaps the rolled biosphere for an AUTHORED one. */
+  const wgen = generateWorld(seed, makeRNG((seed ^ 0x5eed1) >>> 0), groundKey);
   const speciesTable = {};
   for(const s of wgen.species) speciesTable[s.key] = s;
   const firstGrazer = wgen.species.find(s=>s.role==='grazer') || wgen.species[0];
@@ -443,6 +444,7 @@ export function createSim(seed, profileKey='balanced'){
   sim.ship = { x: sim.player.x, z: sim.player.z };
   sim.lastReckoning = null;
   /* THIS WORLD's law, biome and biology (M4) */
+  sim.groundKey = groundKey;
   sim.wgen = wgen;
   sim.species = speciesTable;
   sim.law = LAWS[wgen.law];
@@ -885,6 +887,9 @@ export function createSim(seed, profileKey='balanced'){
     rec.bounty = bountyValue({...ctx, method:rec.method});
     rec.species = sp.label; rec.approach = approach;
     rec.at = sim.simSec; rec.dist = dist; rec.part = part;
+    /* a NAMED falls with its name — the wall should read like a chronicle */
+    if(Q.named){ rec.named = {...Q.named};
+      rec.species = sp.label+' — '+Q.named.name+' '+Q.named.epithet; }
 
     sim.bankTrophy(rec);
     return rec;
@@ -1065,7 +1070,9 @@ export function createSim(seed, profileKey='balanced'){
      it or nothing after a load is reproducible. */
   sim.saveState = function(){
     return JSON.stringify({
-      v:1, seed, profileKey,
+      /* ⚠️ the ground key MUST ride in the save — loadSim rebuilds the world
+         from seed, and without it an Old Ground reloads as a ROLLED world */
+      v:1, seed, profileKey, ground: sim.groundKey,
       simSec:sim.simSec, frame:sim.frame, rng:world.rng.save(),
       wind:{...sim.wind}, player:{...sim.player}, Q:{...sim.Q},
       ship:{...sim.ship},
@@ -1743,6 +1750,15 @@ export function createSim(seed, profileKey='balanced'){
   sim.rollQuarry();
   sim.populate();
   sim.setupColony();          // ~1 world in 5 has people on it
+  /* M13: on an Old Ground, the AUTHORED Named rides the apex — the great
+     hunt is standing on the world the moment you land, name, marking,
+     history and all. It is not rolled, and it starts wary of hunters:
+     it has met your kind before. */
+  if(wgen.named){
+    const ap = sim.faunaByRole('apex');
+    if(ap){ ap.specimenPct = NAMED_PCT; ap.named = {...wgen.named};
+            ap.gravid = false; ap.wary = 1; }
+  }
 
   /* fingerprint for determinism tests */
   sim.fingerprint = function(){
@@ -1766,5 +1782,5 @@ export function createSim(seed, profileKey='balanced'){
 /* rebuild a sim straight from a save file */
 export function loadSim(json){
   const s=typeof json==='string'?JSON.parse(json):json;
-  return createSim(s.seed, s.profileKey).restoreState(s);
+  return createSim(s.seed, s.profileKey, s.ground||null).restoreState(s);
 }

@@ -334,6 +334,126 @@ export function generateSpecies(rng, lawKey, biomeKey, roleKey, existing){
   };
 }
 
+/* ============================================================
+   M13 — THE CLAN GROUNDS
+   A handful of AUTHORED worlds seeded into every galaxy at the same fixed
+   coordinates — the Old Grounds do not move. The infinite worlds are where
+   you hunt; these are where the game has something to say (Caves of Qud /
+   ADOM pattern, §9).
+
+   ⚠️ THE CHARTS TO THEM ARE OPENED BY HONOR (§6): "Honor buys nothing. It
+   opens things — clan rank, charts you cannot otherwise reach." Below rank
+   HUNTER the grounds are simply not on your charts.
+   ============================================================ */
+export const GROUND_RANK = 300;     // standing at which the charts open (HUNTER)
+
+export const CLAN_GROUNDS = {
+  firstwound: {
+    key:'firstwound', name:'THE FIRST WOUND',
+    sector:{sx:0, sy:1, idx:2},
+    law:'colonial', biome:'saltflat',
+    lore:'Here, the clans say, the first hunter was opened up by the first '+
+      'worthy beast — and chose to be glad of it. The salt is white because '+
+      'nothing is buried in it. Everything that dies here is carried.',
+    description:'the white pan where the debt began, and the oldest thing '+
+      'alive still collects on it.',
+    species:[
+      { role:'grazer',    label:'THE SALT-BORNE',  loco:'stilt',    mech:'colonial', scale:1.30 },
+      /* ⚠️ was a skimmer — two low long bodies (choir vs tithe) blurred at
+         range and the audit rejected MY writing, exactly as it should */
+      { role:'filter',    label:'PALLID CHOIR',    loco:'drifter',  mech:'colonial', scale:0.85 },
+      { role:'broodhost', label:'THE CARRIER',     loco:'anchor',   mech:'symbiont', scale:1.10 },
+      { role:'scavenger', label:'DEBT-EATER',      loco:'burrower', mech:'colonial', scale:1.00 },
+      { role:'ambush',    label:'THE TITHE',       loco:'undulate', mech:'mimetic',  scale:1.20 },
+      { role:'apex',      label:'UR-KAAL',         loco:'multipede',mech:'colonial', scale:1.65 }
+    ],
+    named:{ name:'Ur-Kaal', epithet:'the First Debt',
+      marking:'a seam of old scar from throat to hip that never closed',
+      history:'has been owed since before the charts were drawn, and collects.' }
+  },
+  longwatch: {
+    key:'longwatch', name:'THE LONG WATCH',
+    sector:{sx:1, sy:-1, idx:4},
+    law:'migratory', biome:'ashforest',
+    lore:'An OSSUN ground. The forest burned before the clans came and has '+
+      'never decided to grow back. Everything here moves on one clock, and '+
+      'the clock is not yours. Watch, or take nothing.',
+    description:'the burned forest that empties and refills on a clock '+
+      'nothing hurries, least of all the thing at the end of it.',
+    species:[
+      { role:'grazer',    label:'GREY PILGRIM',    loco:'stilt',    mech:'compressed', scale:1.15 },
+      { role:'filter',    label:'CINDER-SIFT',     loco:'drifter',  mech:'buoyant',    scale:0.80 },
+      { role:'migrant',   label:'THE PROCESSION',  loco:'multipede',mech:'compressed', scale:1.35 },
+      { role:'scavenger', label:'AFTERCOMER',      loco:'burrower', mech:'chemical',   scale:1.00 },
+      { role:'pursuit',   label:'THE HERDING WIND',loco:'skimmer',  mech:'echoic',     scale:1.10 },
+      { role:'apex',      label:'SESSH-AMUN',      loco:'brachiate',mech:'compressed', scale:1.75 }
+    ],
+    named:{ name:'Sessh-Amun', epithet:'the Late',
+      marking:'a hide gone white at every joint, like frost that stayed',
+      history:'outwaited four hunters at the same water, seasons apart, and '+
+        'drank after each of them.' }
+  },
+  answer: {
+    key:'answer', name:'THE ANSWER',
+    sector:{sx:-1, sy:0, idx:5},
+    law:'lithic', biome:'rift',
+    lore:'A KRAHN ground. Nothing here can be taken; it can only be answered. '+
+      'The canyon keeps every spear that ever failed, and one thing in it '+
+      'carries nine of them.',
+    description:'the red canyon that keeps failed spears, and the beast that '+
+      'wears nine of them under its hide.',
+    species:[
+      { role:'grazer',    label:'ORE-MOTHER',      loco:'anchor',   mech:'lithic',  scale:1.40 },
+      { role:'filter',    label:'GRIT-VEIL',       loco:'undulate', mech:'lithic',  scale:0.80 },
+      { role:'migrant',   label:'THE PAVING',      loco:'roller',   mech:'lithic',  scale:1.00 },
+      { role:'scavenger', label:'SLAG-TAKER',      loco:'burrower', mech:'lithic',  scale:1.10 },
+      { role:'ambush',    label:'THE TOLL',        loco:'multipede',mech:'mimetic', scale:1.20 },
+      { role:'apex',      label:'BREAK-OF-NINE',   loco:'stilt',    mech:'lithic',  scale:1.80 }
+    ],
+    named:{ name:'Break-of-Nine', epithet:'the Answered',
+      marking:'nine old spearheads carried under the hide, points out',
+      history:'answered nine challenges, kept the nine spears, and is not '+
+        'done counting.' }
+  }
+};
+export const GROUND_KEYS = Object.keys(CLAN_GROUNDS);
+
+/* the Old Grounds sit at the SAME coordinates in every galaxy */
+export function clanGroundAt(sx, sy, idx){
+  for(const k of GROUND_KEYS){
+    const s=CLAN_GROUNDS[k].sector;
+    if(s.sx===sx && s.sy===sy && s.idx===idx) return k;
+  }
+  return null;
+}
+
+/* An authored species still goes through the same machinery — real
+   silhouette, real voice, and the ground's LAW expressed on its body —
+   it is simply WRITTEN instead of rolled. */
+function authoredSpecies(rng, lawKey, spec, existing){
+  const R = ROLES[spec.role], law = LAWS[lawKey];
+  const plan = { loco:spec.loco, scale:spec.scale,
+                 neckLong:spec.neckLong!==false, mech:spec.mech };
+  return {
+    key: spec.role + '_' + existing.length,
+    label: spec.label,
+    role: spec.role, tier: R.tier,
+    profile: spec.profile || R.profile[0],
+    loco: plan.loco, mech: plan.mech, scale: plan.scale, neckLong: plan.neckLong,
+    reach: R.reach * (0.75+plan.scale*0.35),
+    threat: R.threat, speed: R.speed * (law.effect.hover?1.25:1),
+    flee: R.speed*3.2,
+    eats: R.eats,
+    gravidChance: 0.10, namedChance: 0,
+    sil: silhouette(plan), rejected: 0,
+    voice: voiceOf(rng, plan, spec.role),
+    /* the Law holds on an authored body too */
+    bodies: law.effect.bodies || 1,
+    armour: law.effect.armour || 0,
+    hover: !!law.effect.hover
+  };
+}
+
 /* ---------- THE WORLD ---------- */
 /* ⚠️ `line` is a sentence for the gate; `clause` is what survives being
    dropped after "where". Using `line` here produced "…where rock-eaters,
@@ -347,7 +467,25 @@ export function describeWorld(w){
 }
 function aOrAn(s){ return (/^[aeiou]/i.test(s)?'an ':'a ')+s; }
 
-export function generateWorld(seed, rng){
+export function generateWorld(seed, rng, groundKey){
+  /* ⚠️ AN OLD GROUND IS AUTHORED, NOT ROLLED. Same machinery, same laws,
+     same audit — but every species, the Named, and the words on the gate
+     were written down. It consumes NO law/biome/roster rng, so the ground
+     is identical in every galaxy, which is the whole point of it. */
+  if(groundKey && CLAN_GROUNDS[groundKey]){
+    const G = CLAN_GROUNDS[groundKey];
+    const species = [];
+    for(const spec of G.species)
+      species.push(authoredSpecies(rng, G.law, spec, species));
+    const w = { seed, law:G.law, biome:G.biome, legendary:false, species,
+                population:{}, rejected:0,
+                ground:G.key, groundName:G.name, lore:G.lore,
+                named:{...G.named} };
+    for(const s of species) w.population[s.key] = ROLES[s.role].pop;
+    w.description = G.description;
+    return w;
+  }
+
   const legendary = rng() < LEGENDARY_LAW_CHANCE;
   const law   = legendary ? pick(rng, LEGENDARY_LAW_KEYS) : pick(rng, LAW_KEYS);
   const biome = pick(rng, BIOME_KEYS);
