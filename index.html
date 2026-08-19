@@ -441,9 +441,16 @@ const URL_SEED=QS.get('seed');
 const MPQ={host:QS.get('host'), join:QS.get('join')};
 let MP=null;                        // {room, L, mySeat, seats, lossChosen}
 let mpRoomPre=null;
+let mpFailed=false;
 if(MPQ.join){
   mpBanner('REACHING THE PARTY — ROOM '+MPQ.join.toUpperCase()+'…');
-  mpRoomPre = await joinRoom(window.Peer, MPQ.join, mpEvent);
+  /* ⚠️ a dead room must not strand you on the error screen. A guest who
+     reloads still carries ?join= in the URL, and the host is long gone —
+     fall through to your OWN world instead of failing to start. */
+  try{ mpRoomPre = await joinRoom(window.Peer, MPQ.join, mpEvent); }
+  catch(e){ mpFailed=true; mpRoomPre=null;
+    mpBanner('THAT ROOM IS EMPTY — hunting alone tonight.<br><br>press P to open a room of your own');
+    setTimeout(()=>mpBanner(null), 6000); }
 }
 const SEED = mpRoomPre ? mpRoomPre.seed
            : URL_SEED!==null ? parseInt(URL_SEED,10) : universe.worldSeed();
@@ -2176,8 +2183,15 @@ function chooseLoss(k){
        what it is wearing. The KIT loss itself is this client's ledger. */
     if(MP.lossChosen) return;
     MP.lossChosen=true;
-    sim.hunter.kit[k]=false;
+    /* the KIT is this client's ledger — but Q.carrying is SHARED, so it is
+       set only by the echoed command. Setting it locally too would let a
+       strike land in the gap with a take-back on one client and not the
+       other. */
+    const H=sim.hunter;
+    H.pendingLoss=null; H.kit[k]=false; H.taken.push(k);
+    if(H.lastBreak) H.lastBreak.took=k;
     MP.L && MP.L.queue({t:'loss', key:k});
+    commitHunter();                       // the kit you lost is lost for good
     const pick=el('wk-pick'); pick.innerHTML='';
     el('wk-took').textContent=KIT[k].label;
     el('wk-tooknote').textContent=KIT[k].taken;
@@ -2732,16 +2746,30 @@ function mpHandle(r){
       else if(!rec.overkill && !rec.miss)
         flash("YOUR PARTNER MADE THE KILL — THE TROPHY IS THE PARTY'S");
     }
+    /* every client banks to its OWN wall, so every client saves its own */
+    if(!rec.wounded && !rec.miss) commitHunter();
   }
+}
+
+/* ⚠️ IN A PARTY NOTHING ELSE SAVES. commitWorld() is only reachable from the
+   ship/hall/market, and all three are gated off while the party hunts — so a
+   co-op kill was banked to a wall that never reached disk. This persists the
+   HUNTER (the wall, the purse, the kit) but deliberately NOT universe.record:
+   a guest never travelled to the host's world and it does not belong in their
+   Field Journal. */
+function commitHunter(){
+  universe.hunter = sim.hunter;
+  saveUniverse();
 }
 
 function mpOnBroke(b){
   if(b.seat===MP.mySeat){
     if(b.tier==='bleeding'){ onWounded(b); return; }
-    /* the slim break: the sim moved the seat; the LEDGER is ours to keep */
-    const H=sim.hunter;
-    H.injuries[b.injury]=(H.injuries[b.injury]||0)+1;
-    H.breaks=(H.breaks||0)+1;
+    /* the slim break: the sim moved the seat; the LEDGER is ours to keep.
+       ⚠️ through sim.applyLocalBreak — the injury record has a shape and
+       hand-rolling it here poisoned hunterMods() with NaN (found in the
+       post-M12 hardening sweep, before anyone played it) */
+    sim.applyLocalBreak(b);
     MP.lossChosen=false;
     onBroken(b);
   } else {
@@ -2887,7 +2915,7 @@ function stepFrame(dt, withInput){
   if(wakeOpen){ updateWound(dt); post.update(dt,sim.simSec); drawFrame(); frames++; return; }
   if(reckOpen){ reckT+=dt; post.update(dt,sim.simSec); drawFrame(); frames++; return; }
   if(shipOpen||hallOpen||mktOpen){ frames++; return; }  // not down there at all
-  if(MP || MPQ.host || MPQ.join){
+  if(MP || ((MPQ.host || MPQ.join) && !mpFailed)){
     /* ⚠️ the lobby holds the world FROM FRAME ONE — gated on the URL params,
        not on MP, because hostRoom resolves ASYNC and a second of free-running
        sim.step before it lands means the guest builds a world the host has

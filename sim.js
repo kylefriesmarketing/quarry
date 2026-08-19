@@ -1122,6 +1122,26 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
     Q.wary = Math.min(3,(Q.wary||0)+1);
     return {tier:'bleeding', seat:h.seat, cause};
   };
+  /* ⚠️ THE SLIM BREAK'S PERSONAL HALF. strikeSeat moves the SEAT (shared,
+     lockstep); this applies the same break to the LOCAL ledger — and it lives
+     here, next to breakHunter, because the injury record has a SHAPE
+     ({sev,left}) that hunterMods() destructures. A view-side hand-rolled
+     `injuries[k] = n` poisons every mod with NaN: throwErr NaN sends spears
+     to nowhere, and it survives for the rest of the session. */
+  sim.applyLocalBreak = function(ev){
+    const H=sim.hunter;
+    if(!ev || ev.tier!=='broken' || !INJURIES[ev.injury]) return null;
+    const mod=sim.hunterMods();                 // read BEFORE we add the injury
+    const cur=H.injuries[ev.injury];
+    const sev=Math.min(3,(cur?cur.sev:0)+1);
+    H.injuries[ev.injury]={ sev,
+      left: INJURIES[ev.injury].days*DAY_SEC*(0.7+sev*0.3)/mod.con };
+    H.breaks++; H.bleed=0;
+    const pool=KIT_TAKEABLE.filter(k=>H.kit[k]);
+    H.pendingLoss = pool.length ? {options:pool} : null;
+    return {injury:ev.injury, sev, options:pool};
+  };
+
   /* the broken player chose what the beast keeps — arrives as a lockstep
      command so every client's Q.carrying agrees */
   sim.applyLossCmd = function(seat, key){
