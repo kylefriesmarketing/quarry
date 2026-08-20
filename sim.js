@@ -1092,9 +1092,17 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
   };
   sim.strikeSeat = function(h, cause, by){
     if(h.seat===0 && !sim.mp){
-      return sim.hunter.bleed>0 ? sim.breakHunter(cause) : sim.woundHunter(cause, by);
+      /* ⚠️ `by` MUST be forwarded to BOTH tiers. It was dropped on the break
+         path, so a colonist that shot you twice still fell back to blaming
+         sim.Q — which relocated your quarry across the map and made it
+         warier. Caught live: a fresh seed-17 game showed Q.wary=1 within
+         three seconds while headless boot showed 0. */
+      return sim.hunter.bleed>0 ? sim.breakHunter(cause, by)
+                                : sim.woundHunter(cause, by);
     }
-    const Q = by || sim.Q, rng = world.rng;
+    const rng = world.rng;
+    const foreign = !!(by && by.foreign);
+    const Q = foreign ? {} : (by || sim.Q);
     if(h.bleed>0){
       /* BROKEN. Identical rng draws on every client; personal application
          is the victim's business. */
@@ -1111,6 +1119,8 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
       Q.x=Math.max(-lim,Math.min(lim, want.z.x+(rng()-0.5)*46));
       Q.z=Math.max(-lim,Math.min(lim, want.z.z+(rng()-0.5)*46));
       return {tier:'broken', seat:h.seat, cause, injury:key, mp:true,
+              label:sim.attackerInfo(by).label,
+              atX:sim.attackerInfo(by).x, atZ:sim.attackerInfo(by).z,
               options:KIT_TAKEABLE.slice()};
     }
     h.bleed = BLEED_HOURS/24*DAY_SEC;
@@ -1120,7 +1130,9 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
     Q.alertState='ALERT';
     if(Q===sim.Q) Q.spooks = 2;
     Q.wary = Math.min(3,(Q.wary||0)+1);
-    return {tier:'bleeding', seat:h.seat, cause};
+    return {tier:'bleeding', seat:h.seat, cause,
+            label:sim.attackerInfo(by).label,
+            atX:sim.attackerInfo(by).x, atZ:sim.attackerInfo(by).z};
   };
   /* ⚠️ THE SLIM BREAK'S PERSONAL HALF. strikeSeat moves the SEAT (shared,
      lockstep); this applies the same break to the LOCAL ledger — and it lives
@@ -1234,25 +1246,46 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
      formality: an apex mauling you was resetting the STILT-GRAZER's spook
      count and marking it as having drawn your blood. Only the animal that
      actually hit you gets the nemesis state. */
+  /* ⚠️ WHAT HIT YOU IS NOT ALWAYS YOUR QUARRY. A colonist's rifle and a clan
+     hunter's blade used to default `by` to sim.Q, so being shot from a
+     settlement set your quarry's drewBlood, made it flee and bumped its wary
+     count — the same class of bug §13 records for predators, still live for
+     the other two attackers. drewBlood feeds the method grade, so it was
+     quietly rewriting your score too. A FOREIGN source ({foreign:true})
+     wounds the hunter and touches the quarry not at all. */
+  sim.attackerInfo = function(by){
+    if(!by) return {label:'SOMETHING', x:null, z:null, foreign:false};
+    if(by.foreign) return {label:by.label||'SOMETHING', x:by.x??null, z:by.z??null, foreign:true};
+    const sp=sim.species[by.species];
+    return {label: sp?sp.label:'SOMETHING', x:by.x??null, z:by.z??null, foreign:false};
+  };
+
   sim.woundHunter = function(cause, by){
-    const H=sim.hunter, Q=by || sim.Q;
+    const H=sim.hunter, src=sim.attackerInfo(by);
+    const Q=(by && !by.foreign) ? by : (by ? null : sim.Q);
     H.bleed = BLEED_HOURS/24*DAY_SEC;
     H.bleeds++;
-    Q.drewBlood = true;
-    Q.charging=false; Q.gone=false;
-    Q.state='FLEE'; Q.stateT=0;
-    /* agitated but not fled: just under SPOOK, and primed to come again */
-    Q.awareness = Math.min(Q.awareness, SPOOK_AT-0.03);
-    Q.alertState = 'ALERT';
-    if(Q===sim.Q) Q.spooks = 2;
-    Q.wary = Math.min(3,(Q.wary||0)+1);
-    return {tier:'bleeding', cause, by:Q.species, bleed:H.bleed,
-            bleeds:H.bleeds, wary:Q.wary};
+    if(Q){
+      Q.drewBlood = true;
+      Q.charging=false; Q.gone=false;
+      Q.state='FLEE'; Q.stateT=0;
+      /* agitated but not fled: just under SPOOK, and primed to come again */
+      Q.awareness = Math.min(Q.awareness, SPOOK_AT-0.03);
+      Q.alertState = 'ALERT';
+      if(Q===sim.Q) Q.spooks = 2;
+      Q.wary = Math.min(3,(Q.wary||0)+1);
+    }
+    return {tier:'bleeding', cause, by:Q?Q.species:null, bleed:H.bleed,
+            bleeds:H.bleeds, wary:Q?Q.wary:0,
+            label:src.label, atX:src.x, atZ:src.z};
   };
 
   /* TIER 2 — IT BREAKS YOU. Only ever while you are already bleeding. */
   sim.breakHunter = function(cause, by){
-    const H=sim.hunter, Q=by || sim.Q, p=sim.player, rng=world.rng;
+    const H=sim.hunter, p=sim.player, rng=world.rng;
+    const src=sim.attackerInfo(by);
+    /* a foreign attacker (colonist, clan) relocates NOTHING about the quarry */
+    const Q=(by && by.foreign) ? {} : (by || sim.Q);
     H.breaks++;
 
     /* THE SCAR CREDIT (S4): a failed honorable attempt still earns honor,
@@ -1304,7 +1337,8 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
     H.bleed=0;
 
     const ev={tier:'broken', cause, injury:key, sev, blackout, credit, exposure,
-              breaks:H.breaks, wary:Q.wary,
+              breaks:H.breaks, wary:Q.wary||0,
+              label:src.label, atX:src.x, atZ:src.z,
               options:H.pendingLoss?H.pendingLoss.options.slice():[]};
     H.lastBreak=ev;
     return ev;
@@ -1791,7 +1825,8 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
       C.speed = spd;
       if(d <= CLAN.reach && C.strikeT<=0){
         C.strikeT = CLAN.strikeCd; C.struck++;
-        broke = sim.strikeSeat(p, 'clan');
+        broke = sim.strikeSeat(p, 'clan',
+          {foreign:true, label:'A HUNTER OF YOUR OWN CLAN', x:C.x, z:C.z});
       }
     } else {
       /* casting for your trail */
@@ -1923,7 +1958,8 @@ export function createSim(seed, profileKey='balanced', groundKey=null){
         if(d < ENGAGE_RANGE && los && q.shootT<=0 && !p.cloaked){
           q.shootT = SHOOT_CD;
           /* they hit you through the same two tiers everything else does */
-          broke = sim.strikeSeat(p, 'colonist');
+          broke = sim.strikeSeat(p, 'colonist',
+            {foreign:true, label:K.label, x:q.x, z:q.z});
         }
       } else {                                // UNWORTHY: run, and remember
         q.state='FLEEING';

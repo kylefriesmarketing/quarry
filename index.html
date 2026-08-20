@@ -1217,6 +1217,18 @@ function animateJaw(view, c, t, i){
 
 function drawFauna(){
   const t=sim.simSec;
+  /* ⚠️⚠️ THE BIOSPHERE GROWS AND THE VIEWS MUST FOLLOW. sim.recruit() reuses a
+     dead slot when it can — but its scan skips index 0, and index 0 is YOUR
+     QUARRY. So the moment you succeed at the thing the game is about, the
+     replacement of that species is PUSHED onto sim.fauna with no view: fully
+     simulated, completely invisible, and un-hittable too (creatureHit reads
+     faunaViews and finds nothing). Measured on every seed tried, ~900-1800
+     sim-seconds after the kill. Build views for anything new. */
+  while(faunaViews.length < sim.fauna.length-1){
+    const c=sim.fauna[faunaViews.length+1];
+    const v=buildCreature(c.species);
+    scene.add(v); faunaViews.push(v);
+  }
   for(let i=0;i<faunaViews.length;i++){
     const c=sim.fauna[i+1], v=faunaViews[i];
     if(!c){ v.visible=false; continue; }
@@ -2131,7 +2143,7 @@ function woundCrouch(){ const m=sim.hunterMods(); return Math.min(0.18,m.count*0
 /* TIER 1 — it opened you up and the hunt goes on. No screen, no modal:
    the room just gets redder and you get louder. */
 function onWounded(ev){
-  flash('IT OPENED YOU UP — YOU ARE BLEEDING');
+  flash(hitLine(ev,false)+' — YOU ARE BLEEDING');
   el('blood').classList.add('on');
   cam_shake=0.5;
 }
@@ -2141,8 +2153,10 @@ function onBroken(ev){
   if(document.pointerLockElement) document.exitPointerLock();
   el('blood').classList.remove('on');
   const I=INJURIES[ev.injury];
-  el('wk-cause').textContent = ev.cause==='charge'
-    ? 'IT CAME THROUGH YOU · NOTHING REWOUND' : 'NOTHING REWOUND';
+  /* ⚠️ this used to read "NOTHING REWOUND" for everything that was not a
+     charge — a player broken by a colonist or a clan hunter was told
+     literally nothing about what had happened to them. */
+  el('wk-cause').textContent = hitLine(ev,true).replace(/ — .*$/,'') + ' · NOTHING REWOUND';
   el('wk-inj').textContent = I.label + (ev.sev>1?'  ×'+ev.sev:'');
   el('wk-injnote').textContent = I.note;
   /* ⚠️ YOU choose what it keeps. The card cannot be dismissed until you have —
@@ -2698,6 +2712,89 @@ function updateHUD(dt){
   x.putImageData(d,0,0);
   el('grain').style.backgroundImage='url('+c.toDataURL()+')'; })();
 
+
+/* ============================================================
+   ⚠️⚠️ "I KEEP GETTING KILLED BY NOTHING" (Kyle, playtest 2026-08-19)
+   He was right, and it was not one bug but a whole missing sense:
+     · being hit made NO SOUND — not one sfx call on wound or break;
+     · an armed colonist opens fire from ENGAGE_RANGE 30 with no report,
+       no flash and no tracer;
+     · the message always read "IT OPENED YOU UP", implying the quarry
+       even when it was a rifle 30m away or a scavenger behind you;
+     · and the wake card said only "NOTHING REWOUND" for every cause
+       except a charge — so the game literally never named your killer.
+   You cannot hunt what you cannot perceive, and §3 says the player is
+   read on three channels too. This is the answer: WHAT hit you, WHERE
+   it stands, and a sound placed at it.
+   ============================================================ */
+const HIT_VOICE = {
+  charge:   {f0:150, sweep:-0.55, dur:0.30, pulses:1, gap:0,    rough:0.75, formant:2.2},
+  hunted:   {f0:190, sweep:-0.50, dur:0.26, pulses:2, gap:0.05, rough:0.85, formant:2.6},
+  colonist: {f0:880, sweep:-0.92, dur:0.16, pulses:1, gap:0,    rough:0.95, formant:3.4},
+  clan:     {f0:320, sweep:-0.70, dur:0.20, pulses:1, gap:0,    rough:0.60, formant:3.0},
+};
+let hitDirEl=null, hitDirT=0;
+function hitDir(){
+  if(hitDirEl) return hitDirEl;
+  const w=document.createElement('div');
+  w.id='hitdir';
+  w.style.cssText='position:fixed;left:50%;top:50%;width:46vmin;height:46vmin;'+
+    'margin:-23vmin 0 0 -23vmin;pointer-events:none;z-index:45;opacity:0;'+
+    'transition:opacity .18s linear';
+  const arc=document.createElement('div');
+  arc.style.cssText='position:absolute;left:50%;top:0;width:34%;height:9%;'+
+    'margin-left:-17%;border-radius:50%/100% 100% 0 0;'+
+    'background:radial-gradient(ellipse at 50% 100%,rgba(226,74,58,.92),rgba(226,74,58,0) 72%)';
+  w.appendChild(arc);
+  document.body.appendChild(w);
+  return (hitDirEl=w);
+}
+/* WHERE it hit you from, in the words a person would use */
+function bearingWords(atX, atZ){
+  if(atX==null||atZ==null) return {text:'', deg:null};
+  const dx=atX-sim.player.x, dz=atZ-sim.player.z;
+  /* ⚠️ the (sin,cos) convention: camera-forward is yaw+PI and a bearing to
+     your RIGHT is a NEGATIVE delta — the same trap that has now caused four
+     sign bugs here. Mirrors sfx place() exactly rather than re-deriving it. */
+  let rel=Math.atan2(dx,dz)-((MP?camYaw:sim.player.yaw)+Math.PI);
+  while(rel> Math.PI) rel-=Math.PI*2;
+  while(rel<-Math.PI) rel+=Math.PI*2;
+  const front=Math.cos(rel), right=-Math.sin(rel);
+  const text = front>0.55 ? 'AHEAD OF YOU'
+             : front<-0.55 ? 'BEHIND YOU'
+             : right>0 ? 'ON YOUR RIGHT' : 'ON YOUR LEFT';
+  return {text, deg:-rel*180/Math.PI};
+}
+/* the ONE funnel every hit goes through, both tiers */
+function tellTheHit(ev){
+  const cause=ev&&ev.cause||'charge';
+  const who=(ev&&ev.label)||'SOMETHING';
+  const b=bearingWords(ev&&ev.atX, ev&&ev.atZ);
+  /* a sound, PLACED — so you can turn toward it */
+  if(ev && ev.atX!=null) sfx.voice(HIT_VOICE[cause]||HIT_VOICE.charge, ev.atX, ev.atZ);
+  else sfx.voice(HIT_VOICE[cause]||HIT_VOICE.charge, sim.player.x, sim.player.z);
+  if(b.deg!==null){
+    const w=hitDir();
+    w.style.transform='rotate('+b.deg.toFixed(1)+'deg)';
+    w.style.opacity='1'; hitDirT=1.6;
+  }
+  return {who, where:b.text};
+}
+function updateHitDir(dt){
+  if(hitDirT>0){ hitDirT-=dt;
+    if(hitDirT<=0 && hitDirEl) hitDirEl.style.opacity='0'; }
+}
+/* the sentence, per attacker — never the bare "IT" again */
+function hitLine(ev, broken){
+  const t=tellTheHit(ev), w=t.where?' — '+t.where:'';
+  switch(ev&&ev.cause){
+    case 'colonist': return (broken?'SHOT DOWN BY ':'SHOT BY ')+t.who+w;
+    case 'clan':     return (broken?'CUT DOWN BY ':'STRUCK BY ')+t.who+w;
+    case 'hunted':   return t.who+(broken?' RAN YOU DOWN':' IS ON YOU')+w;
+    default:         return t.who+(broken?' CAME THROUGH YOU':' OPENED YOU UP')+w;
+  }
+}
+
 /* ============================================================
    M12 — THE PARTY (view side). Commands out, echoes in. The local client
    resolves its own aim; the sim applies the identical command list on
@@ -2957,7 +3054,7 @@ function stepFrame(dt, withInput){
     o.x+=dt*0.008; o.y-=dt*0.005; }
   /* a trophy claimed — or lost to a scavenger — at the end of a blood trail */
   if(sim.claimed){ showReckoning(sim.claimed); sim.claimed=null; }
-  updateWound(dt);
+  updateWound(dt); updateHitDir(dt);
   if(optic===0) applySky();
   updateHUD(dt);
   post.update(dt,sim.simSec);
